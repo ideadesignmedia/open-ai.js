@@ -98,6 +98,24 @@ const completionStream = (messages = [], resultCount = 1, temperature = 1, topP 
     n: resultCount,
     stream: true
 })
+const getFineTunedModels = () => get(`/v1/fine-tunes`)
+const getFineTunedModel = (id) => get(`/v1/fine-tunes/${id}`)
+const createFineTunedModel = (name, description, model, examples) => post(`/v1/fine-tunes`, {
+    training_file: '',
+    validationFile: '',
+    model: '',
+    n_epochs: '',
+    batch_size: '',
+    learning_rate_multiplier: 0,
+    prompt_loss_weight: 0,
+    compute_classification_metrics: false,
+    classification_n_classes: 0,
+    classification_betas: [],
+    suffix: ''
+})
+const cancelFineTune = (id) => post(`/v1/fine-tunes/${id}/cancel`)
+const getFineTuneEvents = (id) => get(`/v1/fine-tunes/${id}/events`)
+
 module.exports = {
     Message,
     completion,
