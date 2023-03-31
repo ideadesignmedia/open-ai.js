@@ -1,6 +1,6 @@
 {
-  "name": "@ideadesignmedia/ai.js",
-  "version": "1.0.0",
+  "name": "@ideadesignmedia/open-ai.js",
+  "version": "1.0.2",
   "main": "index.js",
   "author": "Sam Wagner <60307610+ideadesignmedia@users.noreply.github.com>",
   "license": "MIT",

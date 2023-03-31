@@ -3,7 +3,7 @@ const args = require('@ideadesignmedia/arguments.js')
 let { OPEN_AI_SECRET, OPEN_AI_ORGANIZATION } = args
 if (!OPEN_AI_SECRET) OPEN_AI_SECRET = process.env.OPEN_AI_SECRET
 if (!OPEN_AI_ORGANIZATION) OPEN_AI_ORGANIZATION = process.env.OPEN_AI_ORGANIZATION
-const { OPEN_AI_ENDPOINT } = process.env
+const { OPEN_AI_ENDPOINT = 'https://api.openai.com' } = process.env
 const { request } = require('@ideadesignmedia/helpers')
 const http = require('http'), https = require('https'), { URL } = require('url'), EventEmitter = require('events')
 const parse = d => {
@@ -90,7 +90,7 @@ const imageSize = (size) => {
     }
 }
 
-const completion = (messages = [], model = 'gpt-3', resultCount = 1, temperature = 1, topP = 1,) => post(`/v1/chat/completions`, {
+const completion = (messages = [], model = 'gpt-3.5-turbo', resultCount = 1, temperature = 1, topP = 1,) => post(`/v1/chat/completions`, {
     model,
     messages,
     temperature,
@@ -98,7 +98,7 @@ const completion = (messages = [], model = 'gpt-3', resultCount = 1, temperature
     n: resultCount
 })
 
-const completionStream = (model = 'gpt-3', messages = [], resultCount = 1, temperature = 1, topP = 1,) => postStream(`/v1/chat/completions`, {
+const completionStream = (model = 'gpt-3.5-turbo', messages = [], resultCount = 1, temperature = 1, topP = 1,) => postStream(`/v1/chat/completions`, {
     model,
     messages,
     temperature,
