@@ -77,49 +77,88 @@ const post = (path, data) => request(`${OPEN_AI_ENDPOINT}${path}`, { method: 'PO
 const postStream = (path, data) => streamResponses(`${OPEN_AI_ENDPOINT}${path}`, { method: 'POST', headers: { 'Authorization': `Bearer ${OPEN_AI_SECRET}`, 'OpenAI-Organization': OPEN_AI_ORGANIZATION, 'Content-Type': 'application/json' } }, JSON.stringify(data))
 const get = (path) => request(`${OPEN_AI_ENDPOINT}${path}`, { method: 'GET', headers: { 'Authorization': `Bearer ${OPEN_AI_SECRET}`, 'OpenAI-Organization': OPEN_AI_ORGANIZATION, 'Content-Type': 'application/json' } })
 
-
-
 const Message = (content, role = 'assistant') => ({ // system, user, assistant
     role,
     content
 })
-const completion = (messages = [], resultCount = 1, temperature = 1, topP = 1,) => post(`/v1/chat/completions`, {
-    model: 'gpt-4',
+const imageSize = (size) => {
+    switch(size) {
+        case 0: return '256x256'
+        case 1: return '512x512'
+        case 2: return '1024x1024'
+        default: return '256x256'
+    }
+}
+
+const completion = (messages = [], model = 'gpt-3', resultCount = 1, temperature = 1, topP = 1,) => post(`/v1/chat/completions`, {
+    model,
     messages,
     temperature,
     top_p: topP,
     n: resultCount
 })
-const completionStream = (messages = [], resultCount = 1, temperature = 1, topP = 1,) => postStream(`/v1/chat/completions`, {
-    model: 'gpt-4',
+
+const completionStream = (model = 'gpt-3', messages = [], resultCount = 1, temperature = 1, topP = 1,) => postStream(`/v1/chat/completions`, {
+    model,
     messages,
     temperature,
     top_p: topP,
     n: resultCount,
     stream: true
 })
+
 const getFineTunedModels = () => get(`/v1/fine-tunes`)
 const getFineTunedModel = (id) => get(`/v1/fine-tunes/${id}`)
-const createFineTunedModel = (name, description, model, examples) => post(`/v1/fine-tunes`, {
-    training_file: '',
-    validationFile: '',
-    model: '',
-    n_epochs: '',
-    batch_size: '',
-    learning_rate_multiplier: 0,
-    prompt_loss_weight: 0,
-    compute_classification_metrics: false,
-    classification_n_classes: 0,
-    classification_betas: [],
-    suffix: ''
+const createFineTunedModel = (trainingFile, validationFile, model, epochs, batchSize, learningRate, promptLoss, computeClassificationMetrics, classificationClasses, classificationBetas, suffix) => post(`/v1/fine-tunes`, {
+    training_file: trainingFile,
+    validationFile: validationFile,
+    model: model,
+    n_epochs: epochs,
+    batch_size: batchSize,
+    learning_rate_multiplier: learningRate,
+    prompt_loss_weight: promptLoss,
+    compute_classification_metrics: computeClassificationMetrics,
+    classification_n_classes: classificationClasses,
+    classification_betas: classificationBetas,
+    suffix
 })
 const cancelFineTune = (id) => post(`/v1/fine-tunes/${id}/cancel`)
 const getFineTuneEvents = (id) => get(`/v1/fine-tunes/${id}/events`)
-
+const generateImage = (prompt, resultCount, responseFormat = 'url', size = 0, user) => post(`/v1/images/generations`, { //b64_json
+    n: Math.min(10, resultCount),
+    prompt,
+    response_format: responseFormat,
+    size: imageSize(size),
+    user
+})
+const editImage = (image, prompt, mask, resultCount, size, responseFormat, user) => post(`/v1/images/edits`, {
+    n: Math.min(10, resultCount),
+    prompt,
+    image,
+    mask,
+    response_format: responseFormat,
+    size: imageSize(size),
+    user
+})
+const getImageVariations = (image, resultCount, size, responseFormat, user) => post(`/v1/images/edits`, {
+    n: Math.min(10, resultCount),
+    image,
+    response_format: responseFormat,
+    size: imageSize(size),
+    user
+})
 module.exports = {
     Message,
     completion,
     completionStream,
     get,
-    post
+    post,
+    getFineTunedModels,
+    getFineTunedModel,
+    createFineTunedModel,
+    cancelFineTune,
+    getFineTuneEvents,
+    generateImage,
+    editImage,
+    getImageVariations
 }
