@@ -1,11 +1,12 @@
 {
   "name": "@ideadesignmedia/open-ai.js",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "main": "index.js",
   "author": "Sam Wagner <60307610+ideadesignmedia@users.noreply.github.com>",
   "license": "MIT",
   "dependencies": {
     "@ideadesignmedia/arguments.js": "^1.0.0",
-    "@ideadesignmedia/helpers": "^1.0.14"
+    "@ideadesignmedia/helpers": "^1.0.14",
+    "form-data": "^4.0.0"
   }
 }
