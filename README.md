@@ -117,6 +117,25 @@ Sample Response:
 ### completionStream
 ```completionStream(messages = [], resultCount = 1, stop, options = { model: 'gpt-3.5-turbo' }) => Promise<ResponseStream>```
 
+#### ResponseStream
+A ResponseStream EventEmitter that manages the response events from the OpenAI API. Manage the stream with the following methods:
+```
+onComplete: () => void
+onData = (data: string[]) => void
+```
+```
+completionStream([Message('Test message, send me back 10 resposes.', 'user')]).then(stream => new Promise((res) => {
+    let d = '
+    stream.onComplete = () => {
+        console.log('Stream Complete: ', data);
+        res(d)
+    }
+    stream.onData = (data) => {
+        console.log('Stream Data: ', data);
+        d += data;
+    }
+}).catch(console.error)
+```
 
 ### chatCompletion
 ```chatCompletion(messages = [], resultCount = 1, stop, options = { model: 'gpt-3.5-turbo' }) => Promise<response>```
@@ -207,6 +226,8 @@ Sample Response:
 
 ### getImageVariations
 ```getImageVariations(image, resultCount, size, responseFormat, user) => Promise<response>```
+
+Sample Response:
 ```
 {
   "created": 1589478378,
