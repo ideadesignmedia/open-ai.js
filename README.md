@@ -1,5 +1,5 @@
 # open-ai.js
-Easily interact with the OpenAI API through our abstraction. Does not use OpenAI's Node SDK.
+Easily interact with the OpenAI API through our SDK.
 
 ## Installation
 ```yarn add @ideadesignmedia/open-ai.js```
