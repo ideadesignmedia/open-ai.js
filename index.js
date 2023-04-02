@@ -147,6 +147,11 @@ const getImageVariations = (image, resultCount, size, responseFormat, user) => p
     size: imageSize(size),
     user
 })
+const getEmbedding = (input, model = 'text-embedding-ada-002', user) => post('/v1/embeddings', {
+    model,
+    input,
+    user
+})
 module.exports = {
     Message,
     completion,
@@ -160,5 +165,6 @@ module.exports = {
     getFineTuneEvents,
     generateImage,
     editImage,
-    getImageVariations
+    getImageVariations,
+    getEmbedding
 }
