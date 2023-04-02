@@ -189,7 +189,16 @@ Sample Response:
 ```
 
 ### generateImage
-```generateImage(prompt, resultCount, responseFormat = 'url', size = 0, user) => Promise<response>```
+```generateImage(prompt, resultCount,  size = 0, responseFormat = 'url', user) => Promise<response>```
+Maximum result count is ```10```.
+Possible Image Sizes: 
+```
+{
+  0: '256x256',
+  1: '512x512', 
+  2: '1024x1024
+}
+```
 
 Sample Response:
 ```
@@ -208,7 +217,8 @@ Sample Response:
 
 ### editImage
 ```editImage(image, prompt, mask, resultCount, size, responseFormat, user) => Promise<response>```
-
+Maximum result count is ```10```.
+See [generateImage](#generateImage) for possible image sizes.
 Sample Response:
 ```
 {
@@ -226,7 +236,8 @@ Sample Response:
 
 ### getImageVariations
 ```getImageVariations(image, resultCount, size, responseFormat, user) => Promise<response>```
-
+Maximum result count is ```10```.
+See [generateImage](#generateImage) for possible image sizes.
 Sample Response:
 ```
 {

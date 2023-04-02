@@ -183,14 +183,14 @@ const createFineTunedModel = (trainingFile, validationFile, model, epochs, batch
 const cancelFineTune = (id) => post(`/v1/fine-tunes/${id}/cancel`)
 const getFineTuneEvents = (id) => get(`/v1/fine-tunes/${id}/events`)
 const deleteFineTune = model => del(`/v1/models/${model}`)
-const generateImage = (prompt, resultCount, responseFormat = 'url', size = 0, user) => post(`/v1/images/generations`, { //b64_json
+const generateImage = (prompt, resultCount = 1, size = 0, responseFormat = 'url', user) => post(`/v1/images/generations`, { //b64_json
     n: Math.min(10, resultCount),
     prompt,
     response_format: responseFormat,
     size: imageSize(size),
     user
 })
-const editImage = (image, prompt, mask, resultCount, size, responseFormat, user) => post(`/v1/images/edits`, {
+const editImage = (image, prompt, mask, resultCount = 1, size = 0, responseFormat = 'url', user) => post(`/v1/images/edits`, {
     n: Math.min(10, resultCount),
     prompt,
     image,
@@ -199,7 +199,7 @@ const editImage = (image, prompt, mask, resultCount, size, responseFormat, user)
     size: imageSize(size),
     user
 })
-const getImageVariations = (image, resultCount, size, responseFormat, user) => post(`/v1/images/edits`, {
+const getImageVariations = (image, resultCount = 1, size = 0, responseFormat = 'url', user) => post(`/v1/images/edits`, {
     n: Math.min(10, resultCount),
     image,
     response_format: responseFormat,
@@ -239,7 +239,7 @@ const moderation = (input, model = 'text-moderation-stable') => post('/v1/modera
     input,
     model
 })
-const edit = (instruction, input, numberOfEdits, options = {model: 'text-davinci-edit-001'}) => post('/v1/edits', { // code-davinci-edit-001
+const edit = (instruction, input, numberOfEdits, options = { model: 'text-davinci-edit-001' }) => post('/v1/edits', { // code-davinci-edit-001
     instruction,
     input,
     n: numberOfEdits,
