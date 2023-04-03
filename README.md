@@ -199,7 +199,7 @@ Possible Image Sizes:
   2: '1024x1024
 }
 ```
-
+Possible response formats are ```url``` or ```b64_json``` or use ```file``` to return the image as a buffer as well as the url.
 Sample Response:
 ```
 {

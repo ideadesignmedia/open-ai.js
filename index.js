@@ -203,9 +203,23 @@ const deleteFineTune = model => del(`/v1/models/${model}`)
 const generateImage = (prompt, resultCount = 1, size = 0, responseFormat = 'url', user) => post(`/v1/images/generations`, { //b64_json
     n: Math.max(1, Math.min(10, resultCount)),
     prompt,
-    response_format: responseFormat,
+    response_format: responseFormat === 'file' ? 'url' : responseFormat,
     size: imageSize(size),
     user
+}).then(async result => {
+    if (responseFormat !== file) return result
+    let data = result.result.data
+    let images = await Promise.allSettled(data.map(async ({ url }) => {
+        const tempDownload = `${os.tmpdir()}/${new Date().getTime()}-${Math.floor(Math.random() * 1000000)}.png`
+        let file = await download(url, tempDownload)
+        let buffer = fs.readFileSync(file)
+        fs.unlinkSync(tempDownload)
+        return buffer
+    }))
+    return images.map(({ value, status, reason }, i) => {
+        if (status === 'fulfilled') return { error: false, result: value, url: data[i].url }
+        return { error: true, message: reason, url: data[i].url }
+    })
 })
 const editImage = (imagePath,prompt, mask, resultCount = 1, size = 0, responseFormat = 'url', user) => new Promise(async (res, rej) => {
     let fileCreationError
