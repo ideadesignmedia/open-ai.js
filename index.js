@@ -207,8 +207,8 @@ const generateImage = (prompt, resultCount = 1, size = 0, responseFormat = 'url'
     size: imageSize(size),
     user
 }).then(async result => {
-    if (responseFormat !== file) return result
-    let data = result.result.data
+    if (responseFormat !== 'file') return result
+    let data = result.data
     let images = await Promise.allSettled(data.map(async ({ url }) => {
         const tempDownload = `${os.tmpdir()}/${new Date().getTime()}-${Math.floor(Math.random() * 1000000)}.png`
         let file = await download(url, tempDownload)
@@ -248,7 +248,7 @@ const editImage = (imagePath,prompt, mask, resultCount = 1, size = 0, responseFo
     }
     postForm('/v1/images/edits', form).then(async result => {
         if (responseFormat !== 'file') return res(result)
-        let data = result.result.data
+        let data = result.data
         let images = await Promise.allSettled(data.map(async ({url}) => {
             const tempDownload = `${os.tmpdir()}/${new Date().getTime()}-${Math.floor(Math.random() * 1000000)}.png`
             let file = await download(url, tempDownload)
