@@ -4,9 +4,10 @@ let { OPEN_AI_SECRET, OPEN_AI_ORGANIZATION } = args
 if (!OPEN_AI_SECRET) OPEN_AI_SECRET = process.env.OPEN_AI_SECRET
 if (!OPEN_AI_ORGANIZATION) OPEN_AI_ORGANIZATION = process.env.OPEN_AI_ORGANIZATION
 const { OPEN_AI_ENDPOINT = 'https://api.openai.com' } = process.env
-const { request } = require('@ideadesignmedia/helpers')
-const http = require('http'), https = require('https'), { URL } = require('url'), EventEmitter = require('events'), FormData = require('form-data'), fs = require('fs'), path = require('path')
+const { request, download } = require('@ideadesignmedia/helpers')
+const http = require('http'), https = require('https'), { URL } = require('url'), EventEmitter = require('events'), FormData = require('form-data'), fs = require('fs'), path = require('path'), os = require('os')
 const { exec } = require('child_process')
+const sharp = require('sharp')
 const parse = d => {
     let o
     try {
@@ -81,10 +82,9 @@ const postForm = (path, form) => new Promise((res, rej) => {
     const provider = link.protocol === 'https:' ? https : http
     const req = provider.request(link, {
         method: 'post',
-        headers: form.getHeaders()
+        headers: { ...form.getHeaders(), 'Authorization': `Bearer ${OPEN_AI_SECRET}`, 'OpenAI-Organization': OPEN_AI_ORGANIZATION }
     });
     req.on('error', e => rej(e))
-    form.pipe(request);
     req.on('response', resp => {
         let d = ''
         resp.on('data', l => d += l)
@@ -98,12 +98,13 @@ const postForm = (path, form) => new Promise((res, rej) => {
             return res(o)
         })
     })
+    form.pipe(req);
 })
 const uploadFileCurl = (pathname, filePath, purpose) => new Promise((res, rej) => {
     exec(`curl ${OPEN_AI_ENDPOINT}${pathname} \
     -H "Authorization: Bearer ${OPEN_AI_SECRET}" \
     -F purpose="${purpose}" \
-    -F file="${path.abs(filePath)}"`, (err, stdout, stderr) => {
+    -F file="${path.resolve(filePath)}"`, (err, stdout, stderr) => {
         if (err) return rej(err)
         if (stderr) return rej(stderr)
         try {
@@ -128,7 +129,23 @@ const imageSize = (size) => {
         default: return '256x256'
     }
 }
-
+const createPng = (imagePath, size) => new Promise((res, rej) => {
+    const [width, height] = size.split('x').map(a => parseInt(a))
+    try {
+        const tempFilePath = `${os.tmpdir()}/${new Date().getTime()}-${Math.floor(Math.random()*1000000)}.png`
+        const fileStream = fs.createReadStream(imagePath)
+        const image = sharp().resize(width, height, {
+            fit: 'fill',
+        }).png()
+        const tempStream = fs.createWriteStream(tempFilePath)
+        fileStream.pipe(image).pipe(tempStream)
+        tempStream.on('close', () => {
+            return res(tempFilePath)
+        })
+    } catch (e) {
+        return rej(e)
+    }
+})
 const completion = (messages = [], resultCount = 1, stop, options = {
     model: 'gpt-3.5-turbo'
 }) => post(`/v1/completions`, {
@@ -184,27 +201,99 @@ const cancelFineTune = (id) => post(`/v1/fine-tunes/${id}/cancel`)
 const getFineTuneEvents = (id) => get(`/v1/fine-tunes/${id}/events`)
 const deleteFineTune = model => del(`/v1/models/${model}`)
 const generateImage = (prompt, resultCount = 1, size = 0, responseFormat = 'url', user) => post(`/v1/images/generations`, { //b64_json
-    n: Math.min(10, resultCount),
+    n: Math.max(1, Math.min(10, resultCount)),
     prompt,
     response_format: responseFormat,
     size: imageSize(size),
     user
 })
-const editImage = (image, prompt, mask, resultCount = 1, size = 0, responseFormat = 'url', user) => post(`/v1/images/edits`, {
-    n: Math.min(10, resultCount),
-    prompt,
-    image,
-    mask,
-    response_format: responseFormat,
-    size: imageSize(size),
-    user
+const editImage = (imagePath,prompt, mask, resultCount = 1, size = 0, responseFormat = 'url', user) => new Promise(async (res, rej) => {
+    let fileCreationError
+    const derivedSize = imageSize(size)
+    const tempFilePath = await createPng(path.isAbsolute(imagePath) ? imagePath : path.resolve(imagePath), derivedSize).catch(e => {
+        fileCreationError = e
+        return null
+    })
+    if (fileCreationError) return rej(fileCreationError)
+    const tempMaskPath = mask ? await createPng(path.isAbsolute(mask) ? mask : path.resolve(mask), derivedSize).catch(e => {
+        fileCreationError = e
+        return null
+    }) : null
+    if (fileCreationError) return rej(fileCreationError)
+    const form = new FormData();
+    try {
+        form.append('prompt', prompt)
+        form.append('image', fs.createReadStream(tempFilePath))
+        if (tempMaskPath) form.append('mask', fs.createReadStream(tempMaskPath))
+        form.append('n', Math.max(Math.min(10, resultCount), 1))
+        form.append('response_format', responseFormat === 'file' ? 'url' : responseFormat)
+        form.append('size', imageSize(size))
+        if (user) form.append('user', user)
+    } catch (e) {
+        return rej(e)
+    }
+    postForm('/v1/images/edits', form).then(async result => {
+        if (responseFormat !== 'file') return res(result)
+        let data = result.result.data
+        let images = await Promise.allSettled(data.map(async ({url}) => {
+            const tempDownload = `${os.tmpdir()}/${new Date().getTime()}-${Math.floor(Math.random() * 1000000)}.png`
+            let file = await download(url, tempDownload)
+            let buffer = fs.readFileSync(file)
+            fs.unlinkSync(tempDownload)
+            return buffer
+        })).catch(e => {
+            return rej(e)
+        })
+        return res(images.map(({value, status, reason}, i) => {
+            if (status === 'fulfilled') return {error: false, result: value, url: data[i].url}
+            return {error: true, message: reason, url: data[i].url}
+        }))
+    }).catch(rej).finally(() => {
+        try {
+            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath)
+        } catch { }
+    })
 })
-const getImageVariations = (image, resultCount = 1, size = 0, responseFormat = 'url', user) => post(`/v1/images/edits`, {
-    n: Math.min(10, resultCount),
-    image,
-    response_format: responseFormat,
-    size: imageSize(size),
-    user
+
+const getImageVariations = (imagePath, resultCount = 1, size = 0, responseFormat = 'url', user) => new Promise(async (res, rej) => {
+    let fileCreationError
+    const derivedSize = imageSize(size)
+    const tempFilePath = await createPng(path.isAbsolute(imagePath) ? imagePath : path.resolve(imagePath), derivedSize).catch(e => {
+        fileCreationError = e
+        return null
+    })
+    if (fileCreationError) return rej(fileCreationError)
+    const form = new FormData();
+    try {
+        form.append('image', fs.createReadStream(tempFilePath))
+        form.append('n', Math.max(1, Math.min(10, resultCount)))
+        form.append('response_format', responseFormat === 'file' ? 'url' : responseFormat)
+        form.append('size', derivedSize)
+        if (user) form.append('user', user)
+    } catch (e) {
+        return rej(e)
+    }
+    postForm('/v1/images/variations', form).then(async result => {
+        if (responseFormat !== 'file') return res(result)
+        let data = result.result.data
+        let images = await Promise.allSettled(data.map(async ({url}) => {
+            const tempDownload = `${os.tmpdir()}/${new Date().getTime()}-${Math.floor(Math.random() * 1000000)}.png`
+            let file = await download(url, tempDownload)
+            let buffer = fs.readFileSync(file)
+            fs.unlinkSync(tempDownload)
+            return buffer
+        })).catch(e => {
+            return rej(e)
+        })
+        return res(images.map(({value, status, reason}, i) => {
+            if (status === 'fulfilled') return {error: false, result: value, url: data[i].url}
+            return {error: true, message: reason, url: data[i].url}
+        }))
+    }).catch(rej).finally(() => {
+        try {
+            if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath)
+        } catch { }
+    })
 })
 const getEmbedding = (input, model = 'text-embedding-ada-002', user) => post('/v1/embeddings', {
     model,

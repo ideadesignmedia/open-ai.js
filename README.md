@@ -216,9 +216,10 @@ Sample Response:
 ```
 
 ### editImage
-```editImage(image, prompt, mask, resultCount, size, responseFormat, user) => Promise<response>```
+```editImage(imagePath, prompt, maskPath, resultCount, size, responseFormat, user) => Promise<response>```
 Maximum result count is ```10```.
 See [generateImage](#generateImage) for possible image sizes.
+May use response types ```url``` or ```b64_json``` or use ```file``` to return the image as a buffer as well as the url.
 Sample Response:
 ```
 {
@@ -235,9 +236,10 @@ Sample Response:
 ```
 
 ### getImageVariations
-```getImageVariations(image, resultCount, size, responseFormat, user) => Promise<response>```
+```getImageVariations(imagePath, resultCount, size, responseFormat, user) => Promise<response>```
 Maximum result count is ```10```.
 See [generateImage](#generateImage) for possible image sizes.
+May use response types ```url``` or ```b64_json``` or use ```file``` to return the image as a buffer as well as the url.
 Sample Response:
 ```
 {
