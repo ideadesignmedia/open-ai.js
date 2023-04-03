@@ -104,7 +104,7 @@ const uploadFileCurl = (pathname, filePath, purpose) => new Promise((res, rej) =
     exec(`curl ${OPEN_AI_ENDPOINT}${pathname} \
     -H "Authorization: Bearer ${OPEN_AI_SECRET}" \
     -F purpose="${purpose}" \
-    -F file="${path.resolve(filePath)}"`, (err, stdout, stderr) => {
+    -F file="@${path.resolve(filePath)}"`, (err, stdout, stderr) => {
         if (err) return rej(err)
         if (stderr) return rej(stderr)
         try {
