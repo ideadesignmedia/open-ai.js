@@ -23,27 +23,33 @@ class ResponseStream {
         this.emitter = new EventEmitter()
         this.d = ''
         this.results = []
+        this.stream.on('error', e => this.emitter.emit('error', e))
         this.stream.on('data', l => {
-            this.d += l
-            let r = this.d.replace(/^data: /g, '').split('\n').map(json => parse(json))
-            this.d = ''
-            for (let i = 0; i < r.length; i++) {
-                if (!r[i]) continue
-                let t = parse(r[i])
-                if (typeof t === 'object') {
-                    const choices = t.choices.filter(({ delta }) => !delta.role).map(({ delta: { content } }) => content)
-                    this.results.push(choices)
-                    this.emitter.emit('data', choices)
-                } else {
-                    this.d += t + (i != r.length - 1 ? '\n' : '')
+            try {
+                this.d += l
+                let r = this.d.replace(/^data: /g, '').split('\n').map(json => parse(json))
+                this.d = ''
+                for (let i = 0; i < r.length; i++) {
+                    if (!r[i]) continue
+                    let t = parse(r[i])
+                    if (typeof t === 'object') {
+                        const choices = t.choices.filter(({ delta }) => !delta.role).map(({ delta: { content } }) => content)
+                        this.results.push(choices)
+                        this.emitter.emit('data', choices)
+                    } else {
+                        this.d += t + (i != r.length - 1 ? '\n' : '')
+                    }
                 }
+            } catch(e) {
+                this.emitter.emit('error', e)
+                this.stream.destroy()
             }
         })
         this.stream.on('end', () => {
             if (this.d) {
                 let r = parse(this.d)
                 if (typeof r === 'object') {
-                    results.push(r)
+                    this.results.push(r)
                 }
             }
             const reduced = this.results.reduce((a, b) => {
@@ -53,13 +59,20 @@ class ResponseStream {
                 }
                 return a
             }, [])
-            this.emitter.emit('complete', reduced)
+            if (this.results.length === 1 && this.results[0].error) {
+                if (typeof this.onError === 'function') return this.onError(this.results[0].error)
+                else throw new Error(this.results[0].error.message)
+            }
+            else this.emitter.emit('complete', reduced)
         })
         this.emitter.on('data', d => {
             if (typeof this.onData === 'function') this.onData(d)
         })
         this.emitter.on('complete', d => {
             if (typeof this.onComplete === 'function') this.onComplete(d)
+        })
+        this.emitter.on('error', (e) => {
+            if (typeof this.onError === 'function') this.onError(e)
         })
     }
 }
@@ -147,9 +160,9 @@ const createPng = (imagePath, size) => new Promise((res, rej) => {
     }
 })
 const completion = (messages = [], resultCount = 1, stop, options = {
-    model: 'gpt-3.5-turbo'
+    model: 'text-ada-001'
 }) => post(`/v1/completions`, {
-    messages,
+    prompt: messages instanceof Array && messages.length === 1 ?  messages[0] :  messages,
     n: resultCount,
     stop: stop || undefined,
     ...options
@@ -157,16 +170,16 @@ const completion = (messages = [], resultCount = 1, stop, options = {
 const chatCompletion = (messages = [], resultCount = 1, stop, options = {
     model: 'gpt-3.5-turbo'
 }) => post(`/v1/chat/completions`, {
-    messages,
+    messages: messages instanceof Array && messages.length === 1 ?  messages[0] :  messages,
     n: resultCount,
     stop: stop || undefined,
     ...options
 })
 
 const completionStream = (messages = [], resultCount = 1, stop, options = {
-    model: 'gpt-3.5-turbo'
+    model: 'text-ada-001'
 }) => postStream(`/v1/completions`, {
-    messages,
+    prompt: messages instanceof Array && messages.length === 1 ?  messages[0] :  messages,
     n: resultCount,
     stream: true,
     stop: stop || undefined,
@@ -175,7 +188,7 @@ const completionStream = (messages = [], resultCount = 1, stop, options = {
 const chatCompletionStream = (messages = [], resultCount = 1, stop, options = {
     model: 'gpt-3.5-turbo'
 }) => postStream(`/v1/chat/completions`, {
-    messages,
+    messages: messages,
     n: resultCount,
     stream: true,
     stop: stop || undefined,
