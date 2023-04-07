@@ -159,10 +159,10 @@ const createPng = (imagePath, size) => new Promise((res, rej) => {
         return rej(e)
     }
 })
-const completion = (messages = [], resultCount = 1, stop, options = {
+const completion = (prompt = "", resultCount = 1, stop, options = {
     model: 'text-ada-001'
 }) => post(`/v1/completions`, {
-    prompt: messages instanceof Array && messages.length === 1 ?  messages[0] :  messages,
+    prompt,
     n: resultCount,
     stop: stop || undefined,
     ...options
@@ -176,10 +176,10 @@ const chatCompletion = (messages = [], resultCount = 1, stop, options = {
     ...options
 })
 
-const completionStream = (messages = [], resultCount = 1, stop, options = {
+const completionStream = (prompt, resultCount = 1, stop, options = {
     model: 'text-ada-001'
 }) => postStream(`/v1/completions`, {
-    prompt: messages instanceof Array && messages.length === 1 ?  messages[0] :  messages,
+    prompt,
     n: resultCount,
     stream: true,
     stop: stop || undefined,
