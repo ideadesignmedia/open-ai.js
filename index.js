@@ -170,7 +170,7 @@ const completion = (prompt = "", resultCount = 1, stop, options = {
 const chatCompletion = (messages = [], resultCount = 1, stop, options = {
     model: 'gpt-3.5-turbo'
 }) => post(`/v1/chat/completions`, {
-    messages: messages instanceof Array && messages.length === 1 ?  messages[0] :  messages,
+    messages,
     n: resultCount,
     stop: stop || undefined,
     ...options
@@ -188,7 +188,7 @@ const completionStream = (prompt, resultCount = 1, stop, options = {
 const chatCompletionStream = (messages = [], resultCount = 1, stop, options = {
     model: 'gpt-3.5-turbo'
 }) => postStream(`/v1/chat/completions`, {
-    messages: messages,
+    messages,
     n: resultCount,
     stream: true,
     stop: stop || undefined,
