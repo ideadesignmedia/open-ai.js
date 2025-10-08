@@ -1,9 +1,9 @@
-import * as fs from 'fs'
+﻿import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import sharp from 'sharp'
 
-import { createFormData, post, postForm } from './http'
+import type { HttpClient } from './http'
 import type { ImageResponse, VectorSize } from './types'
 
 type ImageSize = '256x256' | '512x512' | '1024x1024'
@@ -46,88 +46,96 @@ const createPng = async (sourcePath: string, size: ImageSize): Promise<string> =
   return temporaryImage
 }
 
-const generateImage = (
-  prompt: string,
-  resultCount = 1,
-  size: VectorSize = 0,
-  responseFormat: 'url' | 'b64_json' | 'file' = 'url',
-  user?: string
-): Promise<ImageResponse> => {
-  const payload: ImageGenerationRequest = {
-    prompt,
-    n: Math.max(1, Math.min(10, resultCount)),
-    response_format: responseFormat === 'file' ? 'url' : responseFormat,
-    size: imageSize(size),
-    user
-  }
-  return post<ImageResponse, ImageGenerationRequest>('/v1/images/generations', payload)
-}
-
-const editImage = async (
-  imagePath: string,
-  prompt: string,
-  mask?: string | null,
-  resultCount = 1,
-  size: VectorSize = 0,
-  responseFormat: 'url' | 'b64_json' | 'file' = 'url',
-  user?: string
-): Promise<ImageResponse> => {
-  const derivedSize = imageSize(size)
-  const temporaryImage = await createPng(path.isAbsolute(imagePath) ? imagePath : path.resolve(imagePath), derivedSize)
-  const temporaryMask = mask ? await createPng(path.isAbsolute(mask) ? mask : path.resolve(mask), derivedSize) : null
-  const form = createFormData()
-  form.append('prompt', prompt)
-  form.append('image', fs.createReadStream(temporaryImage))
-  if (temporaryMask) {
-    form.append('mask', fs.createReadStream(temporaryMask))
-  }
-  form.append('n', Math.max(1, Math.min(10, resultCount)))
-  form.append('response_format', responseFormat === 'file' ? 'url' : responseFormat)
-  form.append('size', derivedSize)
-  if (user) {
-    form.append('user', user)
-  }
-  try {
-    return await postForm<ImageResponse>('/v1/images/edits', form, raw => JSON.parse(raw) as ImageResponse)
-  } finally {
-    try {
-      if (fs.existsSync(temporaryImage)) fs.unlinkSync(temporaryImage)
-    } catch {
+const createImageClient = (http: HttpClient) => {
+  const generateImage = (
+    prompt: string,
+    resultCount = 1,
+    size: VectorSize = 0,
+    responseFormat: 'url' | 'b64_json' | 'file' = 'url',
+    user?: string
+  ): Promise<ImageResponse> => {
+    const payload: ImageGenerationRequest = {
+      prompt,
+      n: Math.max(1, Math.min(10, resultCount)),
+      response_format: responseFormat === 'file' ? 'url' : responseFormat,
+      size: imageSize(size),
+      user
     }
+    return http.post<ImageResponse, ImageGenerationRequest>('/v1/images/generations', payload)
+  }
+
+  const editImage = async (
+    imagePath: string,
+    prompt: string,
+    mask?: string | null,
+    resultCount = 1,
+    size: VectorSize = 0,
+    responseFormat: 'url' | 'b64_json' | 'file' = 'url',
+    user?: string
+  ): Promise<ImageResponse> => {
+    const derivedSize = imageSize(size)
+    const temporaryImage = await createPng(path.isAbsolute(imagePath) ? imagePath : path.resolve(imagePath), derivedSize)
+    const temporaryMask = mask ? await createPng(path.isAbsolute(mask) ? mask : path.resolve(mask), derivedSize) : null
+    const form = http.createFormData()
+    form.append('prompt', prompt)
+    form.append('image', fs.createReadStream(temporaryImage))
     if (temporaryMask) {
+      form.append('mask', fs.createReadStream(temporaryMask))
+    }
+    form.append('n', Math.max(1, Math.min(10, resultCount)))
+    form.append('response_format', responseFormat === 'file' ? 'url' : responseFormat)
+    form.append('size', derivedSize)
+    if (user) {
+      form.append('user', user)
+    }
+    try {
+      return await http.postForm<ImageResponse>('/v1/images/edits', form, raw => JSON.parse(raw) as ImageResponse)
+    } finally {
       try {
-        if (fs.existsSync(temporaryMask)) fs.unlinkSync(temporaryMask)
+        if (fs.existsSync(temporaryImage)) fs.unlinkSync(temporaryImage)
+      } catch {
+      }
+      if (temporaryMask) {
+        try {
+          if (fs.existsSync(temporaryMask)) fs.unlinkSync(temporaryMask)
+        } catch {
+        }
+      }
+    }
+  }
+
+  const getImageVariations = async (
+    imagePath: string,
+    resultCount = 1,
+    size: VectorSize = 0,
+    responseFormat: 'url' | 'b64_json' | 'file' = 'url',
+    user?: string
+  ): Promise<ImageResponse> => {
+    const derivedSize = imageSize(size)
+    const temporaryImage = await createPng(path.isAbsolute(imagePath) ? imagePath : path.resolve(imagePath), derivedSize)
+    const form = http.createFormData()
+    form.append('image', fs.createReadStream(temporaryImage))
+    form.append('n', Math.max(1, Math.min(10, resultCount)))
+    form.append('response_format', responseFormat === 'file' ? 'url' : responseFormat)
+    form.append('size', derivedSize)
+    if (user) {
+      form.append('user', user)
+    }
+    try {
+      return await http.postForm<ImageResponse>('/v1/images/variations', form, raw => JSON.parse(raw) as ImageResponse)
+    } finally {
+      try {
+        if (fs.existsSync(temporaryImage)) fs.unlinkSync(temporaryImage)
       } catch {
       }
     }
   }
-}
 
-const getImageVariations = async (
-  imagePath: string,
-  resultCount = 1,
-  size: VectorSize = 0,
-  responseFormat: 'url' | 'b64_json' | 'file' = 'url',
-  user?: string
-): Promise<ImageResponse> => {
-  const derivedSize = imageSize(size)
-  const temporaryImage = await createPng(path.isAbsolute(imagePath) ? imagePath : path.resolve(imagePath), derivedSize)
-  const form = createFormData()
-  form.append('image', fs.createReadStream(temporaryImage))
-  form.append('n', Math.max(1, Math.min(10, resultCount)))
-  form.append('response_format', responseFormat === 'file' ? 'url' : responseFormat)
-  form.append('size', derivedSize)
-  if (user) {
-    form.append('user', user)
-  }
-  try {
-    return await postForm<ImageResponse>('/v1/images/variations', form, raw => JSON.parse(raw) as ImageResponse)
-  } finally {
-    try {
-      if (fs.existsSync(temporaryImage)) fs.unlinkSync(temporaryImage)
-    } catch {
-    }
+  return {
+    generateImage,
+    editImage,
+    getImageVariations
   }
 }
 
-export { editImage, generateImage, getImageVariations }
+export { createImageClient }

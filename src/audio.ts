@@ -1,6 +1,6 @@
-import * as fs from 'fs'
+﻿import * as fs from 'fs'
 
-import { createFormData, post, postForm } from './http'
+import type { HttpClient } from './http'
 import type {
   AudioSpeechResponse,
   SpeechGenerationOptions,
@@ -16,69 +16,77 @@ type SpeechRequest = {
   speed: number
 }
 
-const generateSpeech = (
-  input: string,
-  voice = 'nova',
-  { model = 'tts-1', responseFormat = 'mp3', speed = 1.0 }: SpeechGenerationOptions = {}
-): Promise<AudioSpeechResponse> => {
-  const payload: SpeechRequest = {
-    input,
-    model,
-    voice,
-    response_format: responseFormat,
-    speed
-  }
-  return post<AudioSpeechResponse, SpeechRequest>('/v1/audio/speech', payload)
-}
-
-const getTranscription = async <TFormat extends WhisperResponseFormat = 'json'>(
-  file: string,
-  prompt = '',
-  language = 'en',
-  responseFormat?: TFormat,
-  temperature = 0
-): Promise<WhisperTranscriptionResult<TFormat>> => {
-  const format = responseFormat ?? 'json'
-  const form = createFormData()
-  if (prompt) form.append('prompt', prompt)
-  form.append('temperature', temperature)
-  if (language) form.append('language', language)
-  form.append('response_format', format)
-  form.append('model', 'whisper-1')
-  form.append('file', fs.createReadStream(file))
-
-  const parser = (raw: string): WhisperTranscriptionResult<TFormat> => {
-    if (format === 'json' || format === 'verbose_json') {
-      return JSON.parse(raw) as WhisperTranscriptionResult<TFormat>
+const createAudioClient = (http: HttpClient) => {
+  const generateSpeech = (
+    input: string,
+    voice = 'nova',
+    { model = 'tts-1', responseFormat = 'mp3', speed = 1.0 }: SpeechGenerationOptions = {}
+  ): Promise<AudioSpeechResponse> => {
+    const payload: SpeechRequest = {
+      input,
+      model,
+      voice,
+      response_format: responseFormat,
+      speed
     }
-    return raw as WhisperTranscriptionResult<TFormat>
+    return http.post<AudioSpeechResponse, SpeechRequest>('/v1/audio/speech', payload)
   }
 
-  return postForm(`/v1/audio/transcriptions`, form, parser)
-}
+  const getTranscription = async <TFormat extends WhisperResponseFormat = 'json'>(
+    file: string,
+    prompt = '',
+    language = 'en',
+    responseFormat?: TFormat,
+    temperature = 0
+  ): Promise<WhisperTranscriptionResult<TFormat>> => {
+    const format = responseFormat ?? 'json'
+    const form = http.createFormData()
+    if (prompt) form.append('prompt', prompt)
+    form.append('temperature', temperature)
+    if (language) form.append('language', language)
+    form.append('response_format', format)
+    form.append('model', 'whisper-1')
+    form.append('file', fs.createReadStream(file))
 
-const getTranslation = async <TFormat extends WhisperResponseFormat = 'json'>(
-  file: string,
-  prompt = '',
-  responseFormat?: TFormat,
-  temperature = 0
-): Promise<WhisperTranscriptionResult<TFormat>> => {
-  const format = responseFormat ?? 'json'
-  const form = createFormData()
-  if (prompt) form.append('prompt', prompt)
-  form.append('temperature', temperature)
-  form.append('response_format', format)
-  form.append('model', 'whisper-1')
-  form.append('file', fs.createReadStream(file))
-
-  const parser = (raw: string): WhisperTranscriptionResult<TFormat> => {
-    if (format === 'json' || format === 'verbose_json') {
-      return JSON.parse(raw) as WhisperTranscriptionResult<TFormat>
+    const parser = (raw: string): WhisperTranscriptionResult<TFormat> => {
+      if (format === 'json' || format === 'verbose_json') {
+        return JSON.parse(raw) as WhisperTranscriptionResult<TFormat>
+      }
+      return raw as WhisperTranscriptionResult<TFormat>
     }
-    return raw as WhisperTranscriptionResult<TFormat>
+
+    return http.postForm(`/v1/audio/transcriptions`, form, parser)
   }
 
-  return postForm(`/v1/audio/translations`, form, parser)
+  const getTranslation = async <TFormat extends WhisperResponseFormat = 'json'>(
+    file: string,
+    prompt = '',
+    responseFormat?: TFormat,
+    temperature = 0
+  ): Promise<WhisperTranscriptionResult<TFormat>> => {
+    const format = responseFormat ?? 'json'
+    const form = http.createFormData()
+    if (prompt) form.append('prompt', prompt)
+    form.append('temperature', temperature)
+    form.append('response_format', format)
+    form.append('model', 'whisper-1')
+    form.append('file', fs.createReadStream(file))
+
+    const parser = (raw: string): WhisperTranscriptionResult<TFormat> => {
+      if (format === 'json' || format === 'verbose_json') {
+        return JSON.parse(raw) as WhisperTranscriptionResult<TFormat>
+      }
+      return raw as WhisperTranscriptionResult<TFormat>
+    }
+
+    return http.postForm(`/v1/audio/translations`, form, parser)
+  }
+
+  return {
+    generateSpeech,
+    getTranscription,
+    getTranslation
+  }
 }
 
-export { generateSpeech, getTranscription, getTranslation }
+export { createAudioClient }

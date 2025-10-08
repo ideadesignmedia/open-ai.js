@@ -43,8 +43,15 @@ class ResponseStream {
     this.errorPayload = null
 
     this.stream.on('error', (error: Error) => {
-      this.emitter.emit('error', error)
-      if (this.onError) this.onError(error)
+      const castError = error instanceof Error ? error : new Error(String(error))
+      this.emitError(castError)
+      this.stream.destroy(castError)
+    })
+
+    this.stream.on('aborted', () => {
+      const abortError = new Error('Stream aborted')
+      abortError.name = 'AbortError'
+      this.emitError(abortError)
     })
 
     this.stream.on('data', (chunk: Buffer | string) => {
@@ -52,8 +59,7 @@ class ResponseStream {
         this.handleChunk(typeof chunk === 'string' ? chunk : chunk.toString())
       } catch (error) {
         const castError = error instanceof Error ? error : new Error(String(error))
-        this.emitter.emit('error', castError)
-        if (this.onError) this.onError(castError)
+        this.emitError(castError)
         this.stream.destroy(castError)
       }
     })
@@ -61,10 +67,12 @@ class ResponseStream {
     this.stream.on('end', () => {
       this.flushBuffer()
       if (this.errorPayload) {
-        const payloadError = new Error(this.errorPayload.message)
-        payloadError.name = this.errorPayload.type ?? 'StreamError'
         if (this.onError) this.onError(this.errorPayload)
-        this.emitter.emit('error', payloadError)
+        if (this.emitter.listenerCount('error') > 0) {
+          const payloadError = new Error(this.errorPayload.message)
+          payloadError.name = this.errorPayload.type ?? 'StreamError'
+          this.emitter.emit('error', payloadError)
+        }
         return
       }
       const aggregated = this.chunks.reduce<string[]>((acc, cur) => {
@@ -80,6 +88,15 @@ class ResponseStream {
     this.emitter.on('complete', result => {
       if (this.onComplete) this.onComplete(result as ResponseStreamEvent)
     })
+  }
+
+  private emitError(error: ResponseStreamError): void {
+    if (this.onError) {
+      this.onError(error)
+    }
+    if (this.emitter.listenerCount('error') > 0) {
+      this.emitter.emit('error', error)
+    }
   }
 
   private handleChunk(data: string): void {

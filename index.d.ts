@@ -1,4 +1,4 @@
-
+﻿
 import type { EventEmitter } from 'events'
 import type FormData from 'form-data'
 import type { IncomingMessage, RequestOptions } from 'http'
@@ -11,6 +11,19 @@ export type JsonObject = JsonRecord
 export type UnixTimestamp = number
 export type Nullable<T> = T | null
 export type Dictionary<T = JsonValue> = Record<string, T>
+
+
+export interface OpenAIClientConfig {
+  host?: string
+  key?: string
+  organization?: string
+}
+
+export interface ResolvedOpenAIClientConfig {
+  host: string
+  key: string
+  organization?: string
+}
 
 export type ChatRole = 'assistant' | 'system' | 'user' | 'tool'
 
@@ -523,107 +536,49 @@ export interface OpenAIHelpers {
 }
 
 export declare const Message: <TContent extends JsonValue = string>(content: TContent, role?: ChatRole) => MessagePayload<TContent>
-export declare const completion: (
-  prompt?: string,
-  resultCount?: number,
-  stop?: string | string[],
-  options?: CompletionRequestOptions
-) => Promise<TextCompletionResponse>
-export declare const completionStream: (
-  prompt: string,
-  resultCount?: number,
-  stop?: string | string[],
-  options?: CompletionRequestOptions
-) => Promise<ResponseStream>
-export declare const chatCompletion: (
-  messages?: MessagePayload[],
-  resultCount?: number,
-  stop?: string | string[],
-  options?: ChatCompletionRequestOptions
-) => Promise<ChatCompletionResponse>
-export declare const chatCompletionStream: (
-  messages?: MessagePayload[],
-  resultCount?: number,
-  stop?: string | string[],
-  options?: ChatCompletionRequestOptions
-) => Promise<ResponseStream>
-export declare const createResponse: (payload: ResponseCreateParams) => Promise<ResponseObject>
-export declare const createResponseStream: (payload: ResponseCreateParams) => Promise<ResponseStream>
-export declare const getResponse: (id: string) => Promise<ResponseObject>
-export declare const cancelResponse: (id: string) => Promise<ResponseObject>
-export declare const generateSpeech: (input: string, voice?: string, options?: SpeechGenerationOptions) => Promise<AudioSpeechResponse>
-export declare const listFineTuningJobs: () => Promise<ListResponse<FineTuningJob>>
-export declare const retrieveFineTuningJob: (id: string) => Promise<FineTuningJob>
-export declare const createFineTuningJob: (payload: Dictionary) => Promise<FineTuningJob>
-export declare const cancelFineTuningJob: (id: string) => Promise<FineTuningJob>
-export declare const listFineTuningJobEvents: (id: string) => Promise<ListResponse<FineTuningJobEvent>>
-export declare const listFineTuningJobCheckpoints: (id: string) => Promise<ListResponse<FineTuningJobCheckpoint>>
-export declare const searchVectorStore: (
-  vectorStoreId: string,
-  query: string,
-  options?: {
-    filters?: Dictionary
-    maxNumResults?: number
-    rewriteQuery?: boolean
-  }
-) => Promise<VectorStoreSearchResponse>
-export declare const addFileToVectorStore: (vectorStoreId: string, fileId: string, attributes?: Dictionary) => Promise<VectorStoreFileAssociation>
-export declare const createVectorStore: (name?: string, metadata?: Dictionary) => Promise<VectorStore>
-export declare const getVectorStore: (vectorStoreId: string) => Promise<VectorStore>
-export declare const deleteVectorStore: (vectorStoreId: string) => Promise<VectorStoreDeletion>
-export declare const generateImage: (
-  prompt: string,
-  resultCount?: number,
-  size?: VectorSize,
-  responseFormat?: 'url' | 'b64_json' | 'file',
-  user?: string
-) => Promise<ImageResponse>
-export declare const editImage: (
-  imagePath: string,
-  prompt: string,
-  mask?: string | null,
-  resultCount?: number,
-  size?: VectorSize,
-  responseFormat?: 'url' | 'b64_json' | 'file',
-  user?: string
-) => Promise<ImageResponse>
-export declare const getImageVariations: (
-  imagePath: string,
-  resultCount?: number,
-  size?: VectorSize,
-  responseFormat?: 'url' | 'b64_json' | 'file',
-  user?: string
-) => Promise<ImageResponse>
-export declare const getEmbedding: (input: string | string[], model?: string, user?: string) => Promise<EmbeddingResponse>
-export declare const getTranscription: <TFormat extends WhisperResponseFormat = 'json'>(
-  file: string,
-  prompt?: string,
-  language?: string,
-  responseFormat?: TFormat,
-  temperature?: number
-) => Promise<WhisperTranscriptionResult<TFormat>>
-export declare const getTranslation: <TFormat extends WhisperResponseFormat = 'json'>(
-  file: string,
-  prompt?: string,
-  responseFormat?: TFormat,
-  temperature?: number
-) => Promise<WhisperTranscriptionResult<TFormat>>
-export declare const getFiles: () => Promise<FileListResponse>
-export declare const getFile: (id: string) => Promise<FileObject>
-export declare const getFileContent: (id: string) => Promise<string>
-export declare const uploadFile: (file: string, purpose?: string) => Promise<FileObject>
-export declare const deleteFile: (id: string) => Promise<DeleteResponse>
-export declare const moderation: (input: string | string[], model?: string) => Promise<ModerationResponse>
-export declare const getModels: () => Promise<ListResponse<ModelInfo>>
-export declare const getModel: (model: string) => Promise<ModelInfo>
+export declare class OpenAIClient implements OpenAIHelpers {
+  constructor(config?: OpenAIClientConfig)
+  readonly config: ResolvedOpenAIClientConfig
+  readonly post: OpenAIHelpers['post']
+  readonly get: OpenAIHelpers['get']
+  readonly del: OpenAIHelpers['del']
+  readonly postStream: OpenAIHelpers['postStream']
+  readonly postForm: OpenAIHelpers['postForm']
+  readonly Message: OpenAIHelpers['Message']
+  readonly completion: OpenAIHelpers['completion']
+  readonly completionStream: OpenAIHelpers['completionStream']
+  readonly chatCompletion: OpenAIHelpers['chatCompletion']
+  readonly chatCompletionStream: OpenAIHelpers['chatCompletionStream']
+  readonly createResponse: OpenAIHelpers['createResponse']
+  readonly createResponseStream: OpenAIHelpers['createResponseStream']
+  readonly getResponse: OpenAIHelpers['getResponse']
+  readonly cancelResponse: OpenAIHelpers['cancelResponse']
+  readonly generateSpeech: OpenAIHelpers['generateSpeech']
+  readonly getTranscription: OpenAIHelpers['getTranscription']
+  readonly getTranslation: OpenAIHelpers['getTranslation']
+  readonly listFineTuningJobs: OpenAIHelpers['listFineTuningJobs']
+  readonly retrieveFineTuningJob: OpenAIHelpers['retrieveFineTuningJob']
+  readonly createFineTuningJob: OpenAIHelpers['createFineTuningJob']
+  readonly cancelFineTuningJob: OpenAIHelpers['cancelFineTuningJob']
+  readonly listFineTuningJobEvents: OpenAIHelpers['listFineTuningJobEvents']
+  readonly listFineTuningJobCheckpoints: OpenAIHelpers['listFineTuningJobCheckpoints']
+  readonly searchVectorStore: OpenAIHelpers['searchVectorStore']
+  readonly addFileToVectorStore: OpenAIHelpers['addFileToVectorStore']
+  readonly createVectorStore: OpenAIHelpers['createVectorStore']
+  readonly getVectorStore: OpenAIHelpers['getVectorStore']
+  readonly deleteVectorStore: OpenAIHelpers['deleteVectorStore']
+  readonly generateImage: OpenAIHelpers['generateImage']
+  readonly editImage: OpenAIHelpers['editImage']
+  readonly getImageVariations: OpenAIHelpers['getImageVariations']
+  readonly getEmbedding: OpenAIHelpers['getEmbedding']
+  readonly getFiles: OpenAIHelpers['getFiles']
+  readonly getFile: OpenAIHelpers['getFile']
+  readonly getFileContent: OpenAIHelpers['getFileContent']
+  readonly uploadFile: OpenAIHelpers['uploadFile']
+  readonly deleteFile: OpenAIHelpers['deleteFile']
+  readonly moderation: OpenAIHelpers['moderation']
+  readonly getModels: OpenAIHelpers['getModels']
+  readonly getModel: OpenAIHelpers['getModel']
+}
 
-export declare const post: <TResponse, TRequest>(path: string, data: TRequest) => Promise<TResponse>
-export declare const get: <TResponse>(path: string) => Promise<TResponse>
-export declare const del: <TResponse>(path: string) => Promise<TResponse>
-export declare const postStream: (path: string, data?: JsonValue) => Promise<ResponseStream>
-export declare const postForm: <TResponse>(path: string, form: FormData, parser: (input: string) => TResponse) => Promise<TResponse>
-
-declare const openAI: OpenAIHelpers
-
-export { openAI }
-export default openAI
+export default OpenAIClient

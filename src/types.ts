@@ -1,4 +1,4 @@
-export type NodeFormData = import('form-data')
+﻿export type NodeFormData = import('form-data')
 
 export type JsonPrimitive = string | number | boolean | null
 
@@ -21,6 +21,19 @@ export interface EnvArgs {
 }
 
 export interface ArgumentsModule extends EnvArgs, Record<string, string | undefined> {}
+
+
+export interface OpenAIClientConfig {
+  host?: string
+  key?: string
+  organization?: string
+}
+
+export interface ResolvedOpenAIClientConfig {
+  host: string
+  key: string
+  organization?: string
+}
 
 export type ChatRole = 'assistant' | 'system' | 'user' | 'tool'
 
@@ -532,5 +545,7 @@ export interface OpenAIHelpers {
 
 
 export type ResponseStream = import('./stream').ResponseStream
+
+
 
 

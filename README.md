@@ -5,6 +5,7 @@ Modern helper library for OpenAI-style APIs: chat and text completions, the Resp
 ## Table of Contents
 - [Features](#features)
 - [Installation](#installation)
+- [Client Reference](#client-reference)
 - [Configuration](#configuration)
 - [Importing and Quick Start](#importing-and-quick-start)
 - [Working with Multiple Endpoints](#working-with-multiple-endpoints)
@@ -25,7 +26,6 @@ Modern helper library for OpenAI-style APIs: chat and text completions, the Resp
 ---
 
 ## Installation
-
 ```bash
 # npm
 npm install @ideadesignmedia/open-ai.js
@@ -39,9 +39,133 @@ pnpm add @ideadesignmedia/open-ai.js
 
 ---
 
+## Client Reference
+
+### Common Helpers
+
+- Message(content, role = 'assistant') -> MessagePayload<T>: builds a typed chat message object without mutating the original array.
+
+- post(path, data) / get(path) / del(path) -> Promise<JsonValue>: direct HTTP helpers returning typed JSON parsed via @ideadesignmedia/helpers.
+
+- postStream(path, payload?) -> Promise<ResponseStream>: opens an SSE stream with the same auth headers as other calls.
+
+- postForm(path, formData, parser) -> Promise<T>: uploads multipart payloads (images, audio) and hands the raw body to your parser.
+
+### Text and Chat Completions
+
+- completion(prompt = '', resultCount = 1, stop?, options = { model: 'gpt-4o-mini-instruct' }) -> Promise<TextCompletionResponse>: wraps `/v1/completions` with `CompletionRequestOptions`.
+
+- completionStream(prompt, resultCount = 1, stop?, options?) -> Promise<ResponseStream>: streaming variant of `completion`; emits token deltas via `ResponseStream`.
+
+- chatCompletion(messages = [], resultCount = 1, stop?, options = { model: 'gpt-4o-mini' }) -> Promise<ChatCompletionResponse>: wraps `/v1/chat/completions`.
+
+- chatCompletionStream(messages = [], resultCount = 1, stop?, options = { model: 'gpt-4o-mini' }) -> Promise<ResponseStream>: streaming chat completions.
+
+### Responses API
+
+- createResponse(params: ResponseCreateParams) -> Promise<ResponseObject>: calls `/v1/responses`.
+
+- createResponseStream(params: ResponseCreateParams) -> Promise<ResponseStream>: streaming Responses API helper.
+
+- getResponse(id) -> Promise<ResponseObject>: fetches a stored response.
+
+- cancelResponse(id) -> Promise<ResponseObject>: cancels a background response job.
+
+### Audio
+
+- generateSpeech(input, voice = 'nova', options = { model: 'tts-1', responseFormat: 'mp3', speed: 1 }) -> Promise<AudioSpeechResponse>: text-to-speech helper.
+
+- getTranscription<TFormat extends WhisperResponseFormat = 'json'>(file, prompt?, language?, responseFormat?, temperature = 0) -> Promise<WhisperTranscriptionResult<TFormat>>: uploads audio to `/v1/audio/transcriptions`.
+
+- getTranslation<TFormat extends WhisperResponseFormat = 'json'>(file, prompt?, responseFormat?, temperature = 0) -> Promise<WhisperTranscriptionResult<TFormat>>: translates audio via `/v1/audio/translations`.
+
+### Images
+
+- generateImage(prompt, resultCount = 1, size = 0, responseFormat = 'url', user?) -> Promise<ImageResponse>: wraps `/v1/images/generations`.
+
+- editImage(imagePath, prompt, mask?, resultCount = 1, size = 0, responseFormat = 'url', user?) -> Promise<ImageResponse>: resizes assets with `sharp` before calling `/v1/images/edits`.
+
+- getImageVariations(imagePath, resultCount = 1, size = 0, responseFormat = 'url', user?) -> Promise<ImageResponse>: variation helper.
+
+### Embeddings
+
+- getEmbedding(input, model = 'text-embedding-3-small', user?) -> Promise<EmbeddingResponse>: wraps `/v1/embeddings`.
+
+### Files
+
+- uploadFile(path, purpose = 'fine-tune') -> Promise<FileObject>: multipart upload helper.
+
+- getFiles() -> Promise<FileListResponse>: lists uploaded files.
+
+- getFile(id) -> Promise<FileObject>: retrieves metadata.
+
+- getFileContent(id) -> Promise<string>: returns decoded text for `/content`.
+
+- deleteFile(id) -> Promise<DeleteResponse>: deletes uploaded content.
+
+### Vector Stores
+
+- createVectorStore(name?, metadata?) -> Promise<VectorStore>: creates a store.
+
+- addFileToVectorStore(storeId, fileId, attributes = {}) -> Promise<VectorStoreFileAssociation>: attaches a file.
+
+- searchVectorStore(storeId, query, options?) -> Promise<VectorStoreSearchResponse>: semantic search helper.
+
+- getVectorStore(storeId) -> Promise<VectorStore>: fetches detail.
+
+- deleteVectorStore(storeId) -> Promise<VectorStoreDeletion>: deletes a store.
+
+### Fine-tuning
+
+- listFineTuningJobs() -> Promise<ListResponse<FineTuningJob>>: wraps `/v1/fine_tuning/jobs`.
+
+- createFineTuningJob(payload) -> Promise<FineTuningJob>: starts a job.
+
+- retrieveFineTuningJob(id) -> Promise<FineTuningJob>: fetches job status.
+
+- cancelFineTuningJob(id) -> Promise<FineTuningJob>: cancels a running job.
+
+- listFineTuningJobEvents(id) -> Promise<ListResponse<FineTuningJobEvent>>: event stream.
+
+- listFineTuningJobCheckpoints(id) -> Promise<ListResponse<FineTuningJobCheckpoint>>: retrieves checkpoints.
+
+### Moderation
+
+- moderation(input, model = 'text-moderation-latest') -> Promise<ModerationResponse>: wraps `/v1/moderations`.
+
+### Models
+
+- getModels() -> Promise<ListResponse<ModelInfo>>: lists available models.
+
+- getModel(modelId) -> Promise<ModelInfo>: fetches a single model description.
+
+### ResponseStream basics
+
+- ResponseStream exposes `onData`, `onComplete`, and `onError` callbacks along with an `EventEmitter` for streaming completions. Each chunk is an array of string deltas; `onComplete` receives the concatenated output when the stream finishes.
+
 ## Configuration
 
-The library honours both environment variables and the optional `@ideadesignmedia/arguments.js` CLI shim. The integration tests use a JSON file so they can run against two different backends in a single pass.
+The v2 release introduces an instantiated client so you can bind helpers to a specific endpoint + credential set. Configuration still honours environment variables and the optional `@ideadesignmedia/arguments.js` CLI shim, but you pass the settings explicitly when you construct the client.
+
+```ts
+import OpenAIClient from '@ideadesignmedia/open-ai.js'
+
+const openAI = new OpenAIClient({
+  host: 'https://api.openai.com',
+  key: process.env.OPEN_AI_API_KEY!,
+  organization: process.env.OPEN_AI_ORGANIZATION
+})
+```
+
+`OpenAIClientConfig` accepts three fields today:
+
+- `host` - base URL (defaults to `process.env.OPEN_AI_ENDPOINT` or `https://api.openai.com`).
+- `key` - bearer token used for every request. Required unless it can be resolved from `OPEN_AI_SECRET`/`OPEN_AI_API_KEY` via env/arguments.
+- `organization` - optional organization header for multi-tenant OpenAI accounts.
+
+Any property you omit falls back to environment variables or the `@ideadesignmedia/arguments.js` module, so existing deployments that rely on env-only configuration keep working.
+
+The integration tests still use a JSON file so they can run against two different backends in a single pass.
 
 ```jsonc
 // config-sample.json
@@ -54,12 +178,12 @@ The library honours both environment variables and the optional `@ideadesignmedi
 }
 ```
 
-Copy the sample to `config.json` (the file is ignored by Git and npm) and populate whichever credentials you use:
+Copy the sample to `config.json` (ignored by Git and npm) and populate whichever credentials you use:
 
-- `OPEN_AI_*` values drive requests to OpenAI's hosted platform.
+- `OPEN_AI_*` values drive the client you instantiate for OpenAI's hosted platform.
 - `MODEL_ENDPOINT` / `API_KEY` describe an optional private deployment. If both are set, the test suite automatically exercises every helper against **both** backends in a single pass.
 
-At runtime you can still override any value with process environment variables:
+You can still override values at runtime with environment variables if you prefer not to hardcode secrets:
 
 ```bash
 export OPEN_AI_ENDPOINT="https://api.openai.com"
@@ -68,76 +192,85 @@ export MODEL_ENDPOINT="https://llama.example.com/v1"
 export API_KEY="priv-your-private-key"
 ```
 
-If `OPEN_AI_API_KEY` (or `OPEN_AI_SECRET`) is missing, the helpers throw as soon as you make a request.
-
----
+Missing `key` values (after fallbacks) throw immediately during client construction.
 
 ## Importing and Quick Start
 
 ### TypeScript / ES modules
 
 ```ts
-import openAI, { Message, chatCompletion } from '@ideadesignmedia/open-ai.js'
+import OpenAIClient, { Message } from '@ideadesignmedia/open-ai.js'
 
-const reply = await chatCompletion([
+const client = new OpenAIClient({
+  key: process.env.OPEN_AI_API_KEY!,
+  organization: process.env.OPEN_AI_ORGANIZATION
+})
+
+const reply = await client.chatCompletion([
   Message('Hello!', 'user')
 ])
 
 console.log(reply.choices?.[0]?.message?.content)
 ```
 
+All helpers are exposed as methods on the instance (`client.completion`, `client.createResponseStream`, `client.generateImage`, ...). The `Message` factory remains exported separately for convenience, and is also available as `client.Message` if you prefer instance-only access.
+
 ### CommonJS
 
 ```js
-const { chatCompletion, Message } = require('@ideadesignmedia/open-ai.js')
+const OpenAIClient = require('@ideadesignmedia/open-ai.js').default
+const { Message } = require('@ideadesignmedia/open-ai.js')
 
 async function main() {
-  const reply = await chatCompletion([
-    Message('Hello!', 'user')
-  ])
-
+  const client = new OpenAIClient({ key: process.env.OPEN_AI_API_KEY })
+  const reply = await client.chatCompletion([Message('Hello!', 'user')])
   console.log(reply.choices?.[0]?.message?.content)
 }
 
 main().catch(console.error)
 ```
 
-The default export `openAI` exposes every helper if you prefer a single aggregate object.
-
----
+You can instantiate as many clients as you need - each one keeps its own host/key combo so concurrent requests to different providers stay isolated.
 
 ## Working with Multiple Endpoints
 
-The helpers read credentials from the active environment at call time. That means you can do in-process switches if you need to route particular requests to different providers:
+Create one `OpenAIClient` per backend and call the same helpers through each instance:
 
 ```ts
-import { completion } from '@ideadesignmedia/open-ai.js'
+import OpenAIClient, { Message } from '@ideadesignmedia/open-ai.js'
 
-// Hosted OpenAI request
-process.env.OPEN_AI_ENDPOINT = 'https://api.openai.com'
-process.env.OPEN_AI_API_KEY = process.env.OPENAI_PROD_KEY
-await completion('Write a haiku about timezones')
+const hosted = new OpenAIClient({
+  key: process.env.OPEN_AI_API_KEY!,
+  organization: process.env.OPEN_AI_ORGANIZATION
+})
 
-// Private deployment request
-process.env.OPEN_AI_ENDPOINT = process.env.MODEL_ENDPOINT
-process.env.OPEN_AI_API_KEY = process.env.API_KEY
-await completion("Summarise today's error logs")
+const privateDeployment = new OpenAIClient({
+  host: process.env.MODEL_ENDPOINT!,
+  key: process.env.API_KEY!
+})
+
+const prompt = [Message('Summarise the latest release notes', 'user')]
+
+const hostedReply = await hosted.chatCompletion(prompt)
+const privateReply = await privateDeployment.chatCompletion(prompt)
 ```
 
-For local development, keep `config.json` in sync with both credential sets and let the test runner flip back and forth automatically.
-
----
+Because each client caches its own resolved configuration you can run these calls in parallel without mutating global state. The integration tests take the same approach: they load credentials from `config.json`, instantiate two clients, and run every helper against both targets.
 
 ## Testing
 
 The integration suite exercises every helper against each configured backend. With `config.json` populated it runs once against OpenAI's hosted API and once against your private endpoint.
 
 ```bash
+
 # Run all stages (~3 minutes when both endpoints are available)
+
 yarn test
 
 # Focus on a single stage and target
+
 yarn test -- --test-name-pattern "private: Image helpers"
+
 ```
 
 Each sub-test logs `[INFO]`, `[PASS]`, or `[SKIP]` diagnostics so you can see which features are supported by the private deployment. When an API is unavailable (for example moderation on a private model), the diagnostic is recorded without failing the run.
@@ -149,7 +282,9 @@ Each sub-test logs `[INFO]`, `[PASS]`, or `[SKIP]` diagnostics so you can see wh
 The package ships transpiled CommonJS in `dist/index.js`. Build locally with:
 
 ```bash
+
 yarn build
+
 ```
 
 `dist/index.js` is tracked in git so consumers who install from GitHub receive the compiled artifact.
@@ -159,8 +294,12 @@ yarn build
 ## Troubleshooting
 
 - **`OPEN_AI_API_KEY` missing** - set `OPEN_AI_API_KEY` (or `OPEN_AI_SECRET`) before importing the helpers.
+
 - **Deprecation warning for `util.isArray`** - the entrypoint replaces Node's deprecated helper; ensure you are using the exported module rather than bundling a local copy of `form-data` first.
+
 - **Streaming never completes** - confirm the target endpoint actually emits SSE responses and that intermediaries (CDNs, proxies) are not buffering them.
+
 - **Image helpers fail on private endpoints** - some deployments only implement a subset of the OpenAI API surface; check your provider's documentation for supported routes.
 
 If you spot a drift between these helpers and the latest OpenAI payloads, open an issue with the sample JSON payload so we can keep things in sync.
+

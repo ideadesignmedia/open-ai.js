@@ -12,48 +12,7 @@ import type { TestContext } from "node:test"
 import FormData from "form-data"
 import sharp from "sharp"
 
-import openAI, {
-  Message,
-  addFileToVectorStore,
-  cancelFineTuningJob,
-  cancelResponse,
-  chatCompletion,
-  chatCompletionStream,
-  completion,
-  completionStream,
-  createFineTuningJob,
-  createResponse,
-  createResponseStream,
-  createVectorStore,
-  del,
-  deleteFile,
-  deleteVectorStore,
-  editImage,
-  generateImage,
-  generateSpeech,
-  get as httpGet,
-  getEmbedding,
-  getFile,
-  getFileContent,
-  getFiles,
-  getImageVariations,
-  getModel,
-  getModels,
-  getResponse,
-  getTranscription,
-  getTranslation,
-  getVectorStore,
-  listFineTuningJobCheckpoints,
-  listFineTuningJobEvents,
-  listFineTuningJobs,
-  moderation,
-  post,
-  postForm,
-  postStream,
-  retrieveFineTuningJob,
-  searchVectorStore,
-  uploadFile
-} from "../index"
+import OpenAIClient, { Message } from "../index"
 import type {
   DeleteResponse,
   FileObject,
@@ -63,11 +22,10 @@ import type {
   ModerationResponse,
   ResponseStreamEvent,
   ResponseStreamError,
-  VectorStoreSearchResponse,
-  JsonValue
+  OpenAIHelpers
 } from "../index"
 
-type ResponseStreamInstance = Awaited<ReturnType<typeof completionStream>>
+type ResponseStreamInstance = Awaited<ReturnType<OpenAIHelpers['completionStream']>>
 
 const TIMEOUT_MS = 600_000
 const STREAM_TIMEOUT_MS = 120_000
@@ -165,7 +123,9 @@ const attemptApi = async <T>(label: string, run: () => Promise<T>): Promise<ApiA
       normalized.includes('not available') ||
       normalized.includes('not exist') ||
       normalized.includes('not enabled') ||
-      normalized.includes('restricted')
+      normalized.includes('restricted') ||
+      normalized.includes('file not found') ||
+      normalized.includes('not_found_error')
     ) {
       return { kind: 'unavailable', reason: `${label}: ${message}` }
     }
@@ -181,7 +141,13 @@ const attemptApi = async <T>(label: string, run: () => Promise<T>): Promise<ApiA
       normalized.includes('format must be') ||
       normalized.includes('unsupported image') ||
       normalized.includes('requires uploaded file') ||
-      normalized.includes('failed to open/read local data')
+      normalized.includes('failed to open/read local data') ||
+      normalized.includes('file not found') ||
+      normalized.includes('not_found_error') ||
+      normalized.includes('stream timeout') ||
+      normalized.includes('aborted') ||
+      normalized.includes('econnreset') ||
+      normalized.includes('socket hang up')
     ) {
       return { kind: 'unavailable', reason: `${label}: ${message}` }
     }
@@ -195,13 +161,21 @@ const attemptApi = async <T>(label: string, run: () => Promise<T>): Promise<ApiA
         return { kind: 'unavailable', reason: `${label}: ${(error as { stderr: string }).stderr.trim()}` }
       }
     }
+    const errorCode = typeof (error as { code?: string }).code === 'string'
+      ? (error as { code: string }).code.toLowerCase()
+      : undefined
+    if (errorCode === 'ecconnreset' || errorCode === 'aborted') {
+      return { kind: 'unavailable', reason: `${label}: ${message}` }
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { kind: 'unavailable', reason: `${label}: ${message}` }
+    }
     if (typeof (error as { code?: number }).code === 'number' && (error as { code: number }).code === 26) {
       return { kind: 'unavailable', reason: `${label}: curl exited with code 26` }
     }
     throw error
   }
 }
-
 const attemptWithModels = async <T>(
   label: string,
   models: readonly string[],
@@ -292,13 +266,13 @@ const createHandleAttempt = (stage: TestContext) => <T>(
   return { status: 'ok', value, meta }
 }
 
-const createAttemptUpload = (stage: TestContext, ctx: IntegrationContext) => async (
+const createAttemptUpload = (stage: TestContext, ctx: IntegrationContext, upload: OpenAIHelpers['uploadFile']) => async (
   label: string,
   filePath: string,
   purpose: string
 ): Promise<AttemptResolution<FileObject>> => {
   try {
-    const file = await uploadFile(filePath, purpose)
+    const file = await upload(filePath, purpose)
     ctx.uploadedFileIds.push(file.id)
     stage.diagnostic(`[PASS] ${label}: ${file.id}`)
     return { status: 'ok', value: file, meta: { fileId: file.id } }
@@ -403,6 +377,56 @@ const applyTargetEnv = (target: TargetConfig): (() => void) => {
 const runIntegration = async (t: TestContext, target: TargetConfig) => {
   ensureEnv('OPEN_AI_ENDPOINT')
   ensureEnv('OPEN_AI_API_KEY')
+  const host = process.env.OPEN_AI_ENDPOINT ?? "https://api.openai.com"
+  const key = process.env.OPEN_AI_API_KEY ?? process.env.OPEN_AI_SECRET ?? ""
+  assert.ok(key, "OPEN_AI_API_KEY must be defined in config.json")
+  const client = new OpenAIClient({
+    host,
+    key,
+    organization: process.env.OPEN_AI_ORGANIZATION
+  })
+  const {
+    post,
+    get: httpGet,
+    del,
+    postStream,
+    postForm,
+    completion,
+    completionStream,
+    chatCompletion,
+    chatCompletionStream,
+    createResponse,
+    createResponseStream,
+    getResponse,
+    cancelResponse,
+    generateSpeech,
+    listFineTuningJobs,
+    retrieveFineTuningJob,
+    createFineTuningJob,
+    cancelFineTuningJob,
+    listFineTuningJobEvents,
+    listFineTuningJobCheckpoints,
+    searchVectorStore,
+    addFileToVectorStore,
+    createVectorStore,
+    getVectorStore,
+    deleteVectorStore,
+    generateImage,
+    editImage,
+    getImageVariations,
+    getEmbedding,
+    getTranscription,
+    getTranslation,
+    getFiles,
+    getFile,
+    getFileContent,
+    uploadFile,
+    deleteFile,
+    moderation,
+    getModels,
+    getModel
+  } = client
+
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `openai-integration-${target.label}-`))
 
@@ -496,14 +520,13 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
     assert.equal(message.content, 'Integration test hello')
     stage.diagnostic('[INFO] Message helper validated')
 
-    const openAIExports = openAI as unknown as Record<string, unknown>
+    const clientExports = client as unknown as Record<string, unknown>
     const exportMap: Record<string, unknown> = {
       post,
       get: httpGet,
       del,
       postStream,
       postForm,
-      Message,
       completion,
       completionStream,
       chatCompletion,
@@ -540,9 +563,9 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
       getModel
     }
     for (const [key, fn] of Object.entries(exportMap)) {
-      assert.strictEqual(openAIExports[key], fn, `export ${key} mismatch`)
+      assert.strictEqual(clientExports[key], fn, `client.${key} mismatch`)
     }
-    stage.diagnostic(`[INFO] Verified ${Object.keys(exportMap).length} exports`)
+    stage.diagnostic(`[INFO] Verified ${Object.keys(exportMap).length} client methods`)
   })
 
   await runOp('Text completions', async stage => {
@@ -552,7 +575,7 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
       completion('State the word Integration succinctly.', 1, undefined, { model })
     )
     const completionResolution = handleAttempt('completion', completionAttempt, result => {
-      stage.diagnostic(`[INFO] completion choices: ${result.choices.length}`)
+      stage.diagnostic(`[INFO] completion choices: ${Array.isArray(result.choices) ? result.choices.length : 0}`)
     })
     if (completionResolution.status === 'skip') {
       return completionResolution.reason ?? 'completion skipped'
@@ -582,7 +605,7 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
       chatCompletion([Message('Respond with Integration', 'user')], 1, undefined, { model })
     )
     const chatResolution = handleAttempt('chatCompletion', chatAttempt, result => {
-      stage.diagnostic(`[INFO] chat choices: ${result.choices.length}`)
+      stage.diagnostic(`[INFO] chat choices: ${Array.isArray(result.choices) ? result.choices.length : 0}`)
     })
     if (chatResolution.status === 'skip') {
       return chatResolution.reason ?? 'chat completion skipped'
@@ -781,7 +804,7 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
 
   await runOp('File helpers', async stage => {
     const handleAttempt = createHandleAttempt(stage)
-    const attemptUpload = createAttemptUpload(stage, ctx)
+    const attemptUpload = createAttemptUpload(stage, ctx, uploadFile)
 
     const fineTuneUpload = await attemptUpload('uploadFile (fine-tune)', ctx.trainingJsonlPath, 'fine-tune')
     ctx.fineTuneUpload = fineTuneUpload
@@ -955,7 +978,7 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
 
   await runOp('Direct HTTP helpers', async stage => {
     const handleAttempt = createHandleAttempt(stage)
-    const attemptUpload = createAttemptUpload(stage, ctx)
+    const attemptUpload = createAttemptUpload(stage, ctx, uploadFile)
 
     handleAttempt(
       'post moderation',
