@@ -1,0 +1,7 @@
+{
+    "OPEN_AI_ENDPOINT": "https://api.openai.com",
+    "OPEN_AI_API_KEY": "",
+    "OPEN_AI_ORGANIZATION": "",
+    "MODEL_ENDPOINT": "",
+    "API_KEY": ""
+}
