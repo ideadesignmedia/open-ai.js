@@ -10,11 +10,20 @@ import type {
   StreamErrorPayload
 } from './types'
 
+/**
+ * Parses a JSON string and narrows it to JsonValue for downstream consumers.
+ */
 const parseJson = (data: string): JsonValue => JSON.parse(data) as JsonValue
 
+/**
+ * Type guard that checks whether a JsonValue is a JsonObject map.
+ */
 const isJsonObject = (value: JsonValue): value is JsonObject =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+/**
+ * Type guard that matches completion stream payload envelopes.
+ */
 const isCompletionStreamPayload = (value: JsonValue): value is CompletionStreamPayload => {
   if (!isJsonObject(value)) return false
   const possibleChoices = value.choices
@@ -24,6 +33,9 @@ const isCompletionStreamPayload = (value: JsonValue): value is CompletionStreamP
   return hasChoices || hasError
 }
 
+/**
+ * Event-emitting wrapper around the `/v1/*` streaming SSE responses.
+ */
 class ResponseStream {
   readonly emitter: EventEmitter
   onData?: (chunk: ResponseStreamEvent) => void
@@ -35,6 +47,9 @@ class ResponseStream {
   private readonly chunks: ResponseStreamEvent[]
   private errorPayload: StreamErrorPayload | null
 
+  /**
+   * Wraps a Node HTTP IncomingMessage that delivers SSE-style chunks.
+   */
   constructor(stream: IncomingMessage) {
     this.stream = stream
     this.emitter = new EventEmitter()
@@ -90,6 +105,9 @@ class ResponseStream {
     })
   }
 
+  /**
+   * Emits errors on callbacks and event emitters when streams fail.
+   */
   private emitError(error: ResponseStreamError): void {
     if (this.onError) {
       this.onError(error)
@@ -99,6 +117,9 @@ class ResponseStream {
     }
   }
 
+  /**
+   * Processes buffered chunks from the SSE stream line-by-line.
+   */
   private handleChunk(data: string): void {
     this.buffer += data
     const rows = this.buffer.split('\n')
@@ -111,6 +132,9 @@ class ResponseStream {
     }
   }
 
+  /**
+   * Consumes a single SSE data payload and propagates completions/errors.
+   */
   private consumePayload(raw: string): void {
     if (raw.trim() === '' || raw.trim() === '[DONE]') {
       return
@@ -130,6 +154,9 @@ class ResponseStream {
     }
   }
 
+  /**
+   * Flushes buffered content once the stream terminates.
+   */
   private flushBuffer(): void {
     const bufferContent = this.buffer.trim()
     if (bufferContent) {

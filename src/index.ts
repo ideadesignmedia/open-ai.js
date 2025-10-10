@@ -1,4 +1,4 @@
-﻿import { createHttpClient, type HttpClient } from './http'
+import { createHttpClient, type HttpClient } from './http'
 import { resolveConfig } from './config'
 import { createAudioClient } from './audio'
 import { Message, createChatClient } from './chat'
@@ -12,6 +12,9 @@ import { createResponseClient } from './responses'
 import { createVectorStoreClient } from './vector-store'
 import type { OpenAIClientConfig, OpenAIHelpers, ResolvedOpenAIClientConfig } from './types'
 
+/**
+ * High-level OpenAI helper bundling REST, streaming, and tool surfaces.
+ */
 class OpenAIClient implements OpenAIHelpers {
   public readonly config: ResolvedOpenAIClientConfig
   private readonly http: HttpClient
@@ -67,6 +70,11 @@ class OpenAIClient implements OpenAIHelpers {
   public readonly getModels!: OpenAIHelpers['getModels']
   public readonly getModel!: OpenAIHelpers['getModel']
 
+  /**
+   * Constructs an OpenAI helper, resolving configuration and wiring sub-clients.
+   *
+   * @param config - Optional overrides for host, key, and organization.
+   */
   constructor(config: OpenAIClientConfig = {}) {
     this.config = resolveConfig(config)
     this.http = createHttpClient(this.config)
@@ -137,12 +145,16 @@ class OpenAIClient implements OpenAIHelpers {
 }
 
 export { OpenAIClient, Message }
+export { defineFunctionTool, defineObjectSchema } from './tools'
 
 export type {
   AudioSpeechResponse,
   ChatCompletionMessage,
   ChatCompletionRequestOptions,
   ChatCompletionResponse,
+  ChatFunctionDefinition,
+  ChatCompletionsFunctionTool,
+  ChatToolChoice,
   ChatRole,
   CompletionRequestOptions,
   DeleteResponse,
@@ -156,6 +168,14 @@ export type {
   JsonObject,
   JsonPrimitive,
   JsonRecord,
+  JsonSchema,
+  JsonSchemaType,
+  ObjectSchema,
+  ToolSchemaProperties,
+  ChatToolParametersSchema,
+  InferJsonType,
+  InferParams,
+  InferToolArguments,
   JsonValue,
   ListResponse,
   MessagePayload,
@@ -183,3 +203,7 @@ export type {
 } from './types'
 
 export default OpenAIClient
+
+
+
+

@@ -1,4 +1,4 @@
-﻿import * as fs from 'fs'
+import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import sharp from 'sharp'
@@ -8,6 +8,9 @@ import type { ImageResponse, VectorSize } from './types'
 
 type ImageSize = '256x256' | '512x512' | '1024x1024'
 
+/**
+ * JSON payload forwarded to the image generation endpoint.
+ */
 type ImageGenerationRequest = {
   prompt: string
   n: number
@@ -16,6 +19,11 @@ type ImageGenerationRequest = {
   user?: string
 }
 
+/**
+ * Converts a VectorSize enum to an API-ready `widthxheight` string.
+ *
+ * @param size - Vector size alias (0,1,2) matching the helper defaults.
+ */
 const imageSize = (size: VectorSize): ImageSize => {
   switch (size) {
     case 1:
@@ -28,6 +36,11 @@ const imageSize = (size: VectorSize): ImageSize => {
   }
 }
 
+/**
+ * Parses a `widthxheight` size string into numeric dimensions.
+ *
+ * @param size - Image size string such as `512x512`.
+ */
 const sizeToDimensions = (size: ImageSize): { width: number; height: number } => {
   const [widthString, heightString] = size.split('x')
   const width = Number.parseInt(widthString, 10)
@@ -35,6 +48,13 @@ const sizeToDimensions = (size: ImageSize): { width: number; height: number } =>
   return { width, height }
 }
 
+/**
+ * Resizes an image to the requested dimensions and stores a temporary PNG.
+ *
+ * @param sourcePath - Original asset path.
+ * @param size - Requested API size string.
+ * @returns Absolute path to the resized temporary PNG file.
+ */
 const createPng = async (sourcePath: string, size: ImageSize): Promise<string> => {
   const absoluteSource = path.resolve(sourcePath)
   const { width, height } = sizeToDimensions(size)
@@ -46,7 +66,19 @@ const createPng = async (sourcePath: string, size: ImageSize): Promise<string> =
   return temporaryImage
 }
 
+/**
+ * Creates helper utilities for OpenAI image generation/edit APIs.
+ */
 const createImageClient = (http: HttpClient) => {
+  /**
+   * Generates new images from a prompt via `/v1/images/generations`.
+   *
+   * @param prompt - Natural language description for the desired image.
+   * @param resultCount - Number of alternate renders (clamped 1-10).
+   * @param size - Convenience vector size enum for resizing.
+   * @param responseFormat - Response transport (`url`, `b64_json`, `file`).
+   * @param user - Optional user identifier forwarded to the API.
+   */
   const generateImage = (
     prompt: string,
     resultCount = 1,
@@ -64,6 +96,17 @@ const createImageClient = (http: HttpClient) => {
     return http.post<ImageResponse, ImageGenerationRequest>('/v1/images/generations', payload)
   }
 
+  /**
+   * Edits an existing image using prompt and optional mask.
+   *
+   * @param imagePath - Path to the base image used as the starting point.
+   * @param prompt - Instructions for the edit.
+   * @param mask - Optional mask file path (non-transparent areas are replaced).
+   * @param resultCount - Number of variations to return.
+   * @param size - Desired output size alias.
+   * @param responseFormat - Response transport (`url`, `b64_json`, `file`).
+   * @param user - Optional user identifier forwarded to the API.
+   */
   const editImage = async (
     imagePath: string,
     prompt: string,
@@ -104,6 +147,15 @@ const createImageClient = (http: HttpClient) => {
     }
   }
 
+  /**
+   * Requests image variations for an existing asset.
+   *
+   * @param imagePath - Base image path to generate variations from.
+   * @param resultCount - Number of variations to request.
+   * @param size - Desired size alias for resizing before upload.
+   * @param responseFormat - Response transport (`url`, `b64_json`, `file`).
+   * @param user - Optional user identifier forwarded to the API.
+   */
   const getImageVariations = async (
     imagePath: string,
     resultCount = 1,
@@ -131,6 +183,9 @@ const createImageClient = (http: HttpClient) => {
     }
   }
 
+  /**
+   * Image helper surface exposing generation, edit, and variation helpers.
+   */
   return {
     generateImage,
     editImage,
@@ -138,4 +193,4 @@ const createImageClient = (http: HttpClient) => {
   }
 }
 
-export { createImageClient }
+export { createImageClient }

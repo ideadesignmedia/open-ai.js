@@ -61,6 +61,102 @@ pnpm add @ideadesignmedia/open-ai.js
 
 - chatCompletionStream(messages = [], resultCount = 1, stop?, options = { model: 'gpt-4o-mini' }) -> Promise<ResponseStream>: streaming chat completions.
 
+Example with function tools:
+
+```ts
+import OpenAIClient, { Message, type ChatCompletionsFunctionTool } from '@ideadesignmedia/open-ai.js'
+
+const client = new OpenAIClient({ key: process.env.OPEN_AI_API_KEY! })
+
+const tools: ChatCompletionsFunctionTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_weather',
+      description: 'Get current weather for a city',
+      parameters: {
+        type: 'object',
+        properties: {
+          city: { type: 'string', description: 'City name' },
+          units: { type: 'string', enum: ['metric', 'imperial'] }
+        },
+        required: ['city']
+      }
+    }
+  }
+]
+
+const reply = await client.chatCompletion(
+  [Message('What is the weather in Paris today?', 'user')],
+  1,
+  undefined,
+  {
+    model: 'gpt-4o-mini',
+    tools,
+    tool_choice: 'auto',
+    parallel_tool_calls: true
+  }
+)
+```
+
+Typed tool parameters and inference:
+
+```ts
+import OpenAIClient, {
+  Message,
+  defineFunctionTool,
+  defineObjectSchema,
+  type InferParams,
+  type InferToolArguments
+} from '@ideadesignmedia/open-ai.js'
+
+const bookAppointmentParameters = defineObjectSchema({
+  type: 'object',
+  properties: {
+    timeslot: { type: 'integer', description: '24h hour (e.g. 16 for 4 PM)' },
+    Date: { type: 'string', description: 'today | tomorrow | YYYY-MM-DD' },
+    name_of_doctor: { type: 'string', description: 'Normalized doctor name (e.g. "smith")' }
+  },
+  required: ['timeslot', 'Date', 'name_of_doctor'],
+  additionalProperties: false
+} as const)
+
+const bookAppointmentTool = defineFunctionTool({
+  type: 'function',
+  function: {
+    name: 'get_time_date_doctor_book_appointement',
+    description: 'Fix an appointment with a doctor for a given date and time',
+    parameters: bookAppointmentParameters
+  }
+} as const)
+
+type BookAppointmentArgs = InferParams<typeof bookAppointmentParameters>
+type BookAppointmentCallArgs = InferToolArguments<typeof bookAppointmentTool>
+
+const tools = [bookAppointmentTool] as const
+
+const client = new OpenAIClient({ key: process.env.OPEN_AI_API_KEY! })
+const reply = await client.chatCompletion(
+  [Message('Book an appointment with Dr Smith for tomorrow at 4 PM', 'user')],
+  1,
+  undefined,
+  {
+    model: 'gpt-4o-mini',
+    tools,
+    tool_choice: { type: 'function', function: { name: bookAppointmentTool.function.name } }
+  }
+)
+
+for (const choice of reply.choices) {
+  for (const tc of choice.message.tool_calls ?? []) {
+    if (tc.function.name === bookAppointmentTool.function.name) {
+      const args = JSON.parse(tc.function.arguments) as BookAppointmentCallArgs
+      // args.timeslot -> number, args.Date -> string, args.name_of_doctor -> string
+    }
+  }
+}
+```
+
 ### Responses API
 
 - createResponse(params: ResponseCreateParams) -> Promise<ResponseObject>: calls `/v1/responses`.
@@ -279,15 +375,13 @@ Each sub-test logs `[INFO]`, `[PASS]`, or `[SKIP]` diagnostics so you can see wh
 
 ## Build Output
 
-The package ships transpiled CommonJS in `dist/index.js`. Build locally with:
+The package ships transpiled CommonJS in `dist/index.js` and auto-generated declaration files (with all JSDoc preserved). Build locally with:
 
 ```bash
-
 yarn build
-
 ```
 
-`dist/index.js` is tracked in git so consumers who install from GitHub receive the compiled artifact.
+`dist/index.js` and `dist/index.d.ts` are tracked so consumers installing from GitHub receive the compiled JavaScript and typings.
 
 ---
 

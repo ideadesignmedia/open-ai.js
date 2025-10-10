@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "@ideadesignmedia/open-ai.js",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "main": "dist/index.js",
   "author": "Sam Wagner <60307610+ideadesignmedia@users.noreply.github.com>",
   "license": "MIT",
@@ -21,12 +21,12 @@
     "test": "node --require ts-node/register --test tests/**/*.ts",
     "build": "tsc"
   },
-  "types": "index.d.ts",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "require": "./dist/index.js",
       "default": "./dist/index.js",
-      "types": "./index.d.ts"
+      "types": "./dist/index.d.ts"
     }
   }
 }

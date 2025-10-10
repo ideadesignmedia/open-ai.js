@@ -1,4 +1,4 @@
-﻿import * as fs from 'fs'
+import * as fs from 'fs'
 
 import type { HttpClient } from './http'
 import type {
@@ -8,6 +8,9 @@ import type {
   WhisperTranscriptionResult
 } from './types'
 
+/**
+ * Payload accepted by `/v1/audio/speech` generation endpoint.
+ */
 type SpeechRequest = {
   input: string
   model: string
@@ -16,7 +19,19 @@ type SpeechRequest = {
   speed: number
 }
 
+/**
+ * Creates helper methods for audio-related API surfaces (speech + Whisper).
+ *
+ * @param http - HTTP client used to issue form and JSON requests.
+ */
 const createAudioClient = (http: HttpClient) => {
+  /**
+   * Generates speech audio for the provided text using `/v1/audio/speech`.
+   *
+   * @param input - Text to synthesize.
+   * @param voice - Voice preset to request (defaults to `nova`).
+   * @param options - Extra configuration such as model id, output format, and speed.
+   */
   const generateSpeech = (
     input: string,
     voice = 'nova',
@@ -32,6 +47,15 @@ const createAudioClient = (http: HttpClient) => {
     return http.post<AudioSpeechResponse, SpeechRequest>('/v1/audio/speech', payload)
   }
 
+  /**
+   * Transcribes an audio file via `/v1/audio/transcriptions` (Whisper API).
+   *
+   * @param file - Path to a local audio file.
+   * @param prompt - Optional text prompt to prime the model.
+   * @param language - Expected spoken language hint (defaults to `en`).
+   * @param responseFormat - Desired Whisper response format (json, text, srt, ...).
+   * @param temperature - Temperature for sampling (defaults to 0).
+   */
   const getTranscription = async <TFormat extends WhisperResponseFormat = 'json'>(
     file: string,
     prompt = '',
@@ -58,6 +82,14 @@ const createAudioClient = (http: HttpClient) => {
     return http.postForm(`/v1/audio/transcriptions`, form, parser)
   }
 
+  /**
+   * Translates speech to English via `/v1/audio/translations` (Whisper API).
+   *
+   * @param file - Path to a local audio file.
+   * @param prompt - Optional text prompt to prime the model.
+   * @param responseFormat - Desired Whisper response format (json, text, srt, ...).
+   * @param temperature - Temperature for sampling (defaults to 0).
+   */
   const getTranslation = async <TFormat extends WhisperResponseFormat = 'json'>(
     file: string,
     prompt = '',
@@ -82,6 +114,9 @@ const createAudioClient = (http: HttpClient) => {
     return http.postForm(`/v1/audio/translations`, form, parser)
   }
 
+  /**
+   * Audio helper surface exposing speech synthesis and Whisper utilities.
+   */
   return {
     generateSpeech,
     getTranscription,
@@ -89,4 +124,4 @@ const createAudioClient = (http: HttpClient) => {
   }
 }
 
-export { createAudioClient }
+export { createAudioClient }

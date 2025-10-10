@@ -1,4 +1,4 @@
-﻿import helpers from '@ideadesignmedia/helpers'
+import helpers from '@ideadesignmedia/helpers'
 import * as http from 'http'
 import type { RequestOptions } from 'http'
 import * as https from 'https'
@@ -12,11 +12,22 @@ utilBinding.isArray = Array.isArray
 
 const FormDataConstructor = require('form-data') as typeof import('form-data')
 
+/**
+ * Low-level HTTP helper borrowed from `@ideadesignmedia/helpers`.
+ */
 const rawRequest = helpers.request
 
+/**
+ * Builds a lightweight HTTP client tailored for OpenAI-style endpoints.
+ *
+ * @param config - Fully resolved OpenAI configuration (host/key/org).
+ */
 const createHttpClient = (config: ResolvedOpenAIClientConfig) => {
   const host = config.host.replace(/\/+$/, '')
 
+  /**
+   * Constructs JSON headers with auth/organization metadata as needed.
+   */
   const jsonHeaders = (): Record<string, string> => {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${config.key}`,
@@ -28,11 +39,17 @@ const createHttpClient = (config: ResolvedOpenAIClientConfig) => {
     return headers
   }
 
+  /**
+   * Issues a raw request using the helper binding and returns the parsed result.
+   */
   const request = async <TResponse>(url: string, options: RequestOptions, body?: string): Promise<TResponse> => {
     const result = await rawRequest<TResponse | string>(url, options, body)
     return result as TResponse
   }
 
+  /**
+   * Sends a JSON POST to the configured host + path.
+   */
   const post = async <TResponse, TRequest>(path: string, data: TRequest): Promise<TResponse> => {
     return request<TResponse>(
       `${host}${path}`,
@@ -44,6 +61,9 @@ const createHttpClient = (config: ResolvedOpenAIClientConfig) => {
     )
   }
 
+  /**
+   * Issues a JSON GET request.
+   */
   const get = async <TResponse>(path: string): Promise<TResponse> => {
     return request<TResponse>(`${host}${path}`, {
       method: 'GET',
@@ -51,6 +71,9 @@ const createHttpClient = (config: ResolvedOpenAIClientConfig) => {
     })
   }
 
+  /**
+   * Issues a JSON DELETE request.
+   */
   const del = async <TResponse>(path: string): Promise<TResponse> => {
     return request<TResponse>(`${host}${path}`, {
       method: 'DELETE',
@@ -58,6 +81,9 @@ const createHttpClient = (config: ResolvedOpenAIClientConfig) => {
     })
   }
 
+  /**
+   * Opens an SSE stream based on the provided JSON payload.
+   */
   const postStream = (path: string, data?: JsonRecord): Promise<ResponseStream> =>
     new Promise((resolve, reject) => {
       const url = new URL(`${host}${path}`)
@@ -77,6 +103,9 @@ const createHttpClient = (config: ResolvedOpenAIClientConfig) => {
       req.end()
     })
 
+  /**
+   * Sends a multipart/form-data request and parses the aggregated response.
+   */
   const postForm = <TResponse>(path: string, form: NodeFormData, parser: (input: string) => TResponse): Promise<TResponse> =>
     new Promise((resolve, reject) => {
       const url = new URL(`${host}${path}`)
@@ -110,8 +139,14 @@ const createHttpClient = (config: ResolvedOpenAIClientConfig) => {
       form.pipe(req)
     })
 
+  /**
+   * Creates a FormData instance compatible with Node streams.
+   */
   const createFormData = (): NodeFormData => new FormDataConstructor() as NodeFormData
 
+  /**
+   * HTTP helper surface consumed by higher-level clients.
+   */
   return {
     post,
     get,
@@ -123,4 +158,4 @@ const createHttpClient = (config: ResolvedOpenAIClientConfig) => {
 }
 
 export { createHttpClient }
-export type HttpClient = ReturnType<typeof createHttpClient>
+export type HttpClient = ReturnType<typeof createHttpClient>
