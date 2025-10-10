@@ -9,7 +9,7 @@
     "@ideadesignmedia/arguments.js": "latest",
     "@ideadesignmedia/helpers": "latest",
     "form-data": "^4.0.0",
-    "sharp": "^0.32.0"
+    "sharp": "^0.32.6"
   },
   "devDependencies": {
     "@ideadesignmedia/config.js": "latest",
