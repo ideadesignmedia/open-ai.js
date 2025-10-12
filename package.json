@@ -1,32 +1,36 @@
-﻿{
-  "name": "@ideadesignmedia/open-ai.js",
-  "version": "2.0.1",
-  "main": "dist/index.js",
-  "author": "Sam Wagner <60307610+ideadesignmedia@users.noreply.github.com>",
-  "license": "MIT",
-  "repository": "https://github.com/ideadesignmedia/open-ai.js",
-  "dependencies": {
-    "@ideadesignmedia/arguments.js": "latest",
-    "@ideadesignmedia/helpers": "latest",
-    "form-data": "^4.0.0",
-    "sharp": "^0.32.0"
-  },
-  "devDependencies": {
-    "@ideadesignmedia/config.js": "latest",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.4.0",
-    "@types/node": "^20.11.30"
-  },
-  "scripts": {
-    "test": "node --require ts-node/register --test tests/**/*.ts",
-    "build": "tsc"
-  },
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "require": "./dist/index.js",
-      "default": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+{
+    "name": "@ideadesignmedia/open-ai.js",
+    "version": "2.0.1",
+    "main": "dist/index.js",
+    "author": "Sam Wagner <60307610+ideadesignmedia@users.noreply.github.com>",
+    "license": "MIT",
+    "repository": "https://github.com/ideadesignmedia/open-ai.js",
+    "dependencies": {
+        "@ideadesignmedia/arguments.js": "latest",
+        "@ideadesignmedia/helpers": "latest",
+        "form-data": "^4.0.0",
+        "sharp": "^0.32.0",
+        "ws": "^8.17.0"
+    },
+    "devDependencies": {
+        "@ideadesignmedia/config.js": "latest",
+        "@types/node": "^20.11.30",
+        "@types/ws": "^8.5.10",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.4.0"
+    },
+    "scripts": {
+        "test-mcp": "node --require ts-node/register --test tests/mcp.integration.test.ts tests/mcp.mock-client.test.ts",
+        "build": "tsc",
+        "test-openai": "node --require ts-node/register --test tests/openai.integration.test.ts",
+        "test": "node --require ts-node/register --test tests/**/*.ts"
+    },
+    "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "require": "./dist/index.js",
+            "default": "./dist/index.js",
+            "types": "./dist/index.d.ts"
+        }
     }
-  }
 }

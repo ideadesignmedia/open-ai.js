@@ -1,4 +1,4 @@
-/**
+﻿/**
  * FormData constructor type that maps to the Node polyfill implementation.
  */
 export type NodeFormData = import('form-data')
@@ -702,10 +702,10 @@ export type ObjectSchema<
 /**
  * Strongly typed JSON Schema definition for chat tool parameter objects.
  */
-export type ChatToolParametersSchema<
-  TProps extends ToolSchemaProperties = ToolSchemaProperties,
-  TRequired extends readonly (keyof TProps & string)[] | undefined = undefined,
-  TAdditional extends boolean | JsonSchema | undefined = false
+export type ChatToolParametersSchema<
+  TProps extends ToolSchemaProperties = ToolSchemaProperties,
+  TRequired extends readonly string[] | undefined = readonly string[] | undefined,
+  TAdditional extends boolean | JsonSchema | undefined = boolean | JsonSchema | undefined
 > = ObjectSchema<TProps, TRequired, TAdditional>
 
 /**
@@ -999,3 +999,4 @@ export type ResponseStream = import('./stream').ResponseStream
 
 
 
+

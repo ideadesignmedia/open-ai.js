@@ -1,7 +1,9 @@
-{
-    "OPEN_AI_ENDPOINT": "https://api.openai.com",
-    "OPEN_AI_API_KEY": "",
-    "OPEN_AI_ORGANIZATION": "",
-    "MODEL_ENDPOINT": "",
-    "API_KEY": ""
+﻿{
+  "OPEN_AI_ENDPOINT": "https://api.openai.com",
+  "OPEN_AI_API_KEY": "",
+  "OPEN_AI_ORGANIZATION": "",
+  "MODEL_ENDPOINT": "",
+  "API_KEY": "",
+  "MCP_BRAVE_WS_URL": "ws://127.0.0.1:3333/ws",
+  "BRAVE_API_KEY": ""
 }

@@ -1,4 +1,4 @@
-import { createHttpClient, type HttpClient } from './http'
+﻿import { createHttpClient, type HttpClient } from './http'
 import { resolveConfig } from './config'
 import { createAudioClient } from './audio'
 import { Message, createChatClient } from './chat'
@@ -146,6 +146,7 @@ class OpenAIClient implements OpenAIHelpers {
 
 export { OpenAIClient, Message }
 export { defineFunctionTool, defineObjectSchema } from './tools'
+export { McpClient, McpServer, JsonRpcError } from './mcp'
 
 export type {
   AudioSpeechResponse,
@@ -202,7 +203,15 @@ export type {
   WhisperTranscriptionResult
 } from './types'
 
+export type { McpClientOptions } from './mcp/client'
+export type { McpServerOptions, McpToolHandlerOptions, McpModel, McpMetadata } from './mcp/server'
+
 export default OpenAIClient
+
+
+
+
+
 
 
 

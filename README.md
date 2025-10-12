@@ -1,4 +1,4 @@
-# @ideadesignmedia/open-ai.js
+﻿# @ideadesignmedia/open-ai.js
 
 Modern helper library for OpenAI-style APIs: chat and text completions, the Responses API, tool calling (including remote MCP), vector stores, fine-tuning, images, Whisper, speech, files, moderation, and more. The helpers stay close to the official REST payloads so you can point the same code at OpenAI's hosted service or a compatible private deployment.
 
@@ -397,3 +397,68 @@ yarn build
 
 If you spot a drift between these helpers and the latest OpenAI payloads, open an issue with the sample JSON payload so we can keep things in sync.
 
+### MCP Server & Client
+
+```ts
+import {
+  defineFunctionTool,
+  defineObjectSchema,
+  McpServer,
+  McpClient,
+  type McpServerOptions
+} from '@ideadesignmedia/open-ai.js'
+
+const weatherTool = defineFunctionTool({
+  type: 'function',
+  function: {
+    name: 'get_weather',
+    description: 'Return the current temperature for a city',
+    parameters: defineObjectSchema({
+      type: 'object',
+      properties: {
+        city: { type: 'string', description: 'City to query' }
+      },
+      required: ['city']
+    } as const)
+  }
+} as const)
+
+const server = new McpServer({
+  port: 3030,
+  tools: [
+    {
+      tool: weatherTool,
+      handler: async ({ city }) => ({ city, temperatureC: 22 })
+    }
+  ]
+} satisfies McpServerOptions)
+
+await server.start()
+
+const client = new McpClient({ url: 'ws://localhost:3030/mcp' })
+await client.connect()
+
+const availableTools = await client.listTools()
+const weather = await client.callTool('get_weather', { city: 'Paris' })
+```
+
+You can hand the same `weatherTool` definition to `chatCompletion({ tools: [weatherTool] })`, wire the tool handler into `McpServer`, and forward tool calls/responses between the LLM and your hosted MCP tool. The server now supports all three transports defined in the 2025-06-18 MCP spec: set `transports` to any combination of `['websocket', 'http', 'stdio']` and provide optional `stdio` streams when you want to run over pipes.
+
+On the client side, pass `transport: 'websocket' | 'http' | 'stdio'` to `new McpClient(...)` (with either a URL or STDIO stream/command). The helper automatically negotiates `protocolVersion: '2025-06-18'`, sends the follow-up `initialized` notification via `client.sendInitialized()`, and keeps the HTTP `MCP-Protocol-Version` header in sync.
+
+### Brave MCP
+
+To exercise the Brave Search MCP helpers locally:
+
+1. Export your Brave API key.
+2. Run the official MCP server:
+   ```bash
+   BRAVE_API_KEY=sk-... npx -y @brave/brave-search-mcp-server
+   ```
+3. Point the tests/client at the instance:
+   ```bash
+   export MCP_BRAVE_WS_URL="ws://127.0.0.1:3333/ws"
+   yarn test-mcp
+   ```
+
+If `MCP_BRAVE_WS_URL` is not set (or the endpoint is unreachable) the Brave portions of the tests automatically skip.
