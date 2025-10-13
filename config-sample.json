@@ -4,6 +4,9 @@
   "OPEN_AI_ORGANIZATION": "",
   "MODEL_ENDPOINT": "",
   "API_KEY": "",
-  "MCP_BRAVE_WS_URL": "ws://127.0.0.1:3333/ws",
-  "BRAVE_API_KEY": ""
+  "BRAVE_API_KEY": "",
+  "ANTHROPIC_API_KEY": "",
+  "GOOGLE_GEMINI_API_KEY": "",
+  "COHERE_API_KEY": "",
+  "MISTRAL_API_KEY": ""
 }

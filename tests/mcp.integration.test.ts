@@ -1,7 +1,6 @@
 import "@ideadesignmedia/config.js"
-﻿import assert from "node:assert/strict"
+import assert from "node:assert/strict"
 import http from "node:http"
-import net from "node:net"
 import { setTimeout as sleep } from "node:timers/promises"
 import { spawn } from "node:child_process"
 import WebSocket, { WebSocketServer } from "ws"
@@ -16,20 +15,29 @@ import {
 } from "../index"
 
 const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx"
-const BRAVE_HELP = "Set MCP_BRAVE_WS_URL to a reachable MCP server or provide BRAVE_API_KEY to launch the official Brave MCP server (BRAVE_API_KEY=... npx -y @brave/brave-search-mcp-server)."
+const BRAVE_HELP = "Set BRAVE_API_KEY to launch the official Brave MCP server locally (BRAVE_API_KEY=... npx -y @brave/brave-search-mcp-server)."
 
 const getFreePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
-    const server = net.createServer()
+    const server = http.createServer()
     server.unref()
-    server.on("error", reject)
+    server.once("error", error => {
+      const reason = error instanceof Error ? error : new Error(String(error))
+      reject(reason)
+    })
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
       if (typeof address === "object" && address && typeof address.port === "number") {
         const port = address.port
-        server.close(() => resolve(port))
+        server.close(closeError => {
+          if (closeError) {
+            reject(closeError)
+          } else {
+            resolve(port)
+          }
+        })
       } else {
-        server.close(() => reject(new Error("Unable to determine free port")))
+        server.close(() => reject(new Error("Unable to determine free HTTP port")))
       }
     })
   })
@@ -178,249 +186,244 @@ test("mcp: local server", { timeout: 30_000 }, async t => {
   })
 })
 
+
 test("mcp: brave handshake", { timeout: 30_000 }, async t => {
-  let url = process.env.MCP_BRAVE_WS_URL
   const apiKey = process.env.BRAVE_API_KEY
-  const requireBraveSuccess = Boolean(apiKey)
+  if (!apiKey) {
+    t.skip(`Brave MCP connection skipped. ${BRAVE_HELP}`)
+    return
+  }
+  const requireBraveSuccess = true
+
+  const port = await getFreePort()
+  const url = `ws://127.0.0.1:${port}/ws`
+  console.log(`[mcp-brave] launching local MCP server on ${url}`)
+
+  const sockets = new Set<WebSocket>()
+  let wss: WebSocketServer | undefined
   let child: ReturnType<typeof spawn> | undefined
+  let stdoutBuffer = ''
 
-  if (!url || apiKey) {
-    if (!apiKey) {
-      t.skip(`Brave MCP connection skipped. ${BRAVE_HELP}`)
-      return
-    }
-
-    const port = await getFreePort()
-    url = `ws://127.0.0.1:${port}/ws`
-    console.log(`[mcp-brave] launching local MCP server on ${url}`)
-
-    const sockets = new Set<WebSocket>()
-    let wss: WebSocketServer | undefined
-    let stdoutBuffer = ''
-    const forwardToSockets = (message: string) => {
-      for (const socket of sockets) {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(message)
-        }
+  const forwardToSockets = (message: string) => {
+    for (const socket of sockets) {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(message)
       }
     }
-    const handleStdoutChunk = (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString('utf8')
-      let newlineIndex = stdoutBuffer.indexOf("\n")
-      while (newlineIndex !== -1) {
-        const rawLine = stdoutBuffer.slice(0, newlineIndex)
-        stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1)
-        const line = rawLine.replace(/\r$/, '')
-        if (line.length > 0) {
-          try {
-            const message = JSON.parse(line) as Record<string, unknown>
-            if (Object.prototype.hasOwnProperty.call(message, 'result') || Object.prototype.hasOwnProperty.call(message, 'error')) {
-              if (message.id == null) {
-                console.warn('[mcp-brave] response missing id', message)
-              } else {
-                const outgoing = {
-                  id: String(message.id),
-                  type: 'response' as const,
-                  result: message.result,
-                  error: message.error
-                }
-                forwardToSockets(JSON.stringify(outgoing))
-              }
-            } else if (typeof message.method === 'string' && Object.prototype.hasOwnProperty.call(message, 'id')) {
-              const outgoing = {
-                id: message.id == null ? undefined : String(message.id),
-                type: 'request' as const,
-                method: message.method as string,
-                params: message.params
-              }
-              forwardToSockets(JSON.stringify(outgoing))
-            } else {
-              console.warn('[mcp-brave] unsupported stdout message', message)
-            }
-          } catch {
-            console.warn('[mcp-brave] ignored non-JSON stdout:', line)
-          }
-        }
-        newlineIndex = stdoutBuffer.indexOf("\n")
-      }
-    }
-
-    child = spawn(
-      npxCommand,
-      ['-y', '@brave/brave-search-mcp-server'],
-      {
-        env: { ...process.env, BRAVE_API_KEY: apiKey, BRAVE_MCP_TRANSPORT: 'stdio' },
-        stdio: ['pipe', 'pipe', 'pipe'],
-        shell: process.platform === 'win32'
-      }
-    )
-
-    const spawned = child
-
-    wss = new WebSocketServer({ host: '127.0.0.1', port, path: '/ws' })
-    wss.on('connection', socket => {
-      console.log("[mcp-brave] bridge accepted websocket client")
-      sockets.add(socket)
-      let handshakeCompleted = false
-      socket.on('message', data => {
-        const text = typeof data === 'string' ? data : data.toString('utf8')
-        if (!handshakeCompleted) {
-          try {
-            const message = JSON.parse(text) as Record<string, unknown>
-            if (message?.type === 'handshake') {
-              const protocol = typeof message.protocol === 'string' ? (message.protocol as string) : 'model-context-protocol/1.0'
-              const response = {
-                type: 'handshake',
-                protocol,
-                server: { name: 'brave-search-bridge', version: '0.1.0' }
-              }
-              socket.send(JSON.stringify(response))
-              handshakeCompleted = true
-              return
-            }
-            console.warn('[mcp-brave] unexpected message before handshake', message)
-          } catch (error) {
-            console.warn('[mcp-brave] invalid handshake payload', error)
-          }
-          socket.close(1002, 'handshake required')
-          return
-        }
-
-        try {
-          const envelope = JSON.parse(text) as Record<string, unknown>
-          if (envelope?.type === 'request' && typeof envelope.method === 'string') {
-            const method = envelope.method as string
-            const rpc: Record<string, unknown> = {
-              jsonrpc: '2.0',
-              id: envelope.id ?? null,
-              method,
-              params: envelope.params
-            }
-            if (method === 'search') {
-              rpc.method = 'tools/call'
-              rpc.params = {
-                name: 'brave_web_search',
-                arguments: envelope.params
-              }
-            } else if (method === 'local_search') {
-              rpc.method = 'tools/call'
-              rpc.params = {
-                name: 'brave_local_search',
-                arguments: envelope.params
-              }
-            } else if (method === 'list_tools' || method === 'tools/list') {
-              rpc.method = 'tools/list'
-            }
-            if (spawned.stdin?.writable) {
-              spawned.stdin.write(`${JSON.stringify(rpc)}\n`)
-            }
-            return
-          }
-          if (envelope?.type === 'notification' && typeof envelope.method === 'string') {
-            const rpc = {
-              jsonrpc: '2.0',
-              method: envelope.method as string,
-              params: envelope.params
-            }
-            if (spawned.stdin?.writable) {
-              spawned.stdin.write(`${JSON.stringify(rpc)}\n`)
-            }
-            return
-          }
-          if (spawned.stdin?.writable) {
-            spawned.stdin.write(text.endsWith("\n") ? text : `${text}\n`)
-          } else {
-            console.warn('[mcp-brave] dropped message (stdin closed)', envelope)
-          }
-        } catch (error) {
-          console.warn('[mcp-brave] failed to parse websocket payload', error)
-        }
-      })
-      socket.once('close', () => sockets.delete(socket))
-      socket.on('error', error => {
-        console.warn("[mcp-brave] bridge socket error", error)
-      })
-    })
-
-    let resolvedStart = false
-    const startPromise = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        if (!resolvedStart) {
-          console.warn("[mcp-brave] no stdout from Brave server within 2s; continuing")
-          resolvedStart = true
-          resolve()
-        }
-      }, 2_000)
-
-      spawned.stdout?.on('data', chunk => {
-        handleStdoutChunk(chunk)
-        if (!resolvedStart) {
-          resolvedStart = true
-          clearTimeout(timer)
-          resolve()
-        }
-      })
-
-      spawned.stderr?.on('data', data => {
-        console.warn("[mcp-brave] server stderr:", data.toString())
-      })
-
-      spawned.once('error', error => {
-        clearTimeout(timer)
-        reject(error)
-      })
-
-      spawned.once('exit', code => {
-        if (!resolvedStart) {
-          reject(new Error(`Brave MCP server exited with code ${code}`))
-        } else {
-          console.log(`[mcp-brave] Brave MCP server exited with code ${code}`)
-        }
-      })
-    })
-
-    try {
-      await startPromise
-      console.log("[mcp-brave] local Brave MCP server started")
-    } catch (error) {
-      wss?.close()
-      spawned.kill()
-      const reason = error instanceof Error ? error : new Error(String(error))
-      if (requireBraveSuccess) {
-        throw new Error(`Unable to start Brave MCP server: ${reason.message}`)
-      }
-      t.skip(`Unable to start Brave MCP server: ${reason.message}. ${BRAVE_HELP}`)
-      return
-    }
-
-    t.after(async () => {
-      for (const socket of sockets) {
-        try {
-          socket.close()
-        } catch (socketError) {
-          console.warn("[mcp-brave] error closing bridge socket", socketError)
-        }
-      }
-      await new Promise<void>(resolve => {
-        if (wss) {
-          wss.close(() => resolve())
-        } else {
-          resolve()
-        }
-      })
-      if (child) {
-        console.log("[mcp-brave] shutting down spawned Brave MCP server")
-        try {
-          child?.stdin?.end()
-        } catch (stdinError) {
-          console.warn("[mcp-brave] error closing stdin", stdinError)
-        }
-        child?.kill()
-        await sleep(200)
-      }
-    })
   }
 
+  const handleStdoutChunk = (chunk: Buffer) => {
+    stdoutBuffer += chunk.toString('utf8')
+    let newlineIndex = stdoutBuffer.indexOf("\n")
+    while (newlineIndex !== -1) {
+      const rawLine = stdoutBuffer.slice(0, newlineIndex)
+      stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1)
+      const line = rawLine.replace(/\r$/, '')
+      if (line.length > 0) {
+        try {
+          const message = JSON.parse(line) as Record<string, unknown>
+          if (Object.prototype.hasOwnProperty.call(message, 'result') || Object.prototype.hasOwnProperty.call(message, 'error')) {
+            if (message.id == null) {
+              console.warn('[mcp-brave] response missing id', message)
+            } else {
+              const outgoing = {
+                id: String(message.id),
+                type: 'response' as const,
+                result: message.result,
+                error: message.error
+              }
+              forwardToSockets(JSON.stringify(outgoing))
+            }
+          } else if (typeof message.method === 'string' && Object.prototype.hasOwnProperty.call(message, 'id')) {
+            const outgoing = {
+              id: message.id == null ? undefined : String(message.id),
+              type: 'request' as const,
+              method: message.method as string,
+              params: message.params
+            }
+            forwardToSockets(JSON.stringify(outgoing))
+          } else {
+            console.warn('[mcp-brave] unsupported stdout message', message)
+          }
+        } catch {
+          console.warn('[mcp-brave] ignored non-JSON stdout:', line)
+        }
+      }
+      newlineIndex = stdoutBuffer.indexOf("\n")
+    }
+  }
+
+  child = spawn(
+    npxCommand,
+    ['-y', '@brave/brave-search-mcp-server'],
+    {
+      env: { ...process.env, BRAVE_API_KEY: apiKey, BRAVE_MCP_TRANSPORT: 'stdio' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: process.platform === 'win32'
+    }
+  )
+
+  const spawned = child
+
+  wss = new WebSocketServer({ host: '127.0.0.1', port, path: '/ws' })
+  wss.on('connection', socket => {
+    console.log('[mcp-brave] bridge accepted websocket client')
+    sockets.add(socket)
+    let handshakeCompleted = false
+    socket.on('message', data => {
+      const textMessage = typeof data === 'string' ? data : data.toString('utf8')
+      if (!handshakeCompleted) {
+        try {
+          const message = JSON.parse(textMessage) as Record<string, unknown>
+          if (message?.type === 'handshake') {
+            const protocol = typeof message.protocol === 'string' ? (message.protocol as string) : 'model-context-protocol/1.0'
+            const response = {
+              type: 'handshake',
+              protocol,
+              server: { name: 'brave-search-bridge', version: '0.1.0' }
+            }
+            socket.send(JSON.stringify(response))
+            handshakeCompleted = true
+            return
+          }
+          console.warn('[mcp-brave] unexpected message before handshake', message)
+        } catch (error) {
+          console.warn('[mcp-brave] invalid handshake payload', error)
+        }
+        socket.close(1002, 'handshake required')
+        return
+      }
+
+      try {
+        const envelope = JSON.parse(textMessage) as Record<string, unknown>
+        if (envelope?.type === 'request' && typeof envelope.method === 'string') {
+          const method = envelope.method as string
+          const rpc: Record<string, unknown> = {
+            jsonrpc: '2.0',
+            id: envelope.id ?? null,
+            method,
+            params: envelope.params
+          }
+          if (method === 'search') {
+            rpc.method = 'tools/call'
+            rpc.params = {
+              name: 'brave_web_search',
+              arguments: envelope.params
+            }
+          } else if (method === 'local_search') {
+            rpc.method = 'tools/call'
+            rpc.params = {
+              name: 'brave_local_search',
+              arguments: envelope.params
+            }
+          } else if (method === 'list_tools' || method === 'tools/list') {
+            rpc.method = 'tools/list'
+          }
+          if (spawned.stdin?.writable) {
+            spawned.stdin.write(`${JSON.stringify(rpc)}\n`)
+          }
+          return
+        }
+        if (envelope?.type === 'notification' && typeof envelope.method === 'string') {
+          const rpc = {
+            jsonrpc: '2.0',
+            method: envelope.method as string,
+            params: envelope.params
+          }
+          if (spawned.stdin?.writable) {
+            spawned.stdin.write(`${JSON.stringify(rpc)}\n`)
+          }
+          return
+        }
+        if (spawned.stdin?.writable) {
+          spawned.stdin.write(textMessage.endsWith("\n") ? textMessage : `${textMessage}\n`)
+        } else {
+          console.warn('[mcp-brave] dropped message (stdin closed)', envelope)
+        }
+      } catch (error) {
+        console.warn('[mcp-brave] failed to parse websocket payload', error)
+      }
+    })
+    socket.once('close', () => sockets.delete(socket))
+    socket.on('error', error => {
+      console.warn('[mcp-brave] bridge socket error', error)
+    })
+  })
+
+  const startPromise = new Promise<void>((resolve, reject) => {
+    let resolved = false
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        console.warn('[mcp-brave] no stdout from Brave server within 2s; continuing')
+        resolved = true
+        resolve()
+      }
+    }, 2_000)
+
+    spawned.stdout?.on('data', chunk => {
+      handleStdoutChunk(chunk)
+      if (!resolved) {
+        resolved = true
+        clearTimeout(timer)
+        resolve()
+      }
+    })
+
+    spawned.stderr?.on('data', data => {
+      console.warn('[mcp-brave] server stderr:', data.toString())
+    })
+
+    spawned.once('error', error => {
+      clearTimeout(timer)
+      reject(error)
+    })
+
+    spawned.once('exit', code => {
+      if (!resolved) {
+        reject(new Error(`Brave MCP server exited with code ${code}`))
+      } else {
+        console.log(`[mcp-brave] Brave MCP server exited with code ${code}`)
+      }
+    })
+  })
+
+  try {
+    await startPromise
+    console.log('[mcp-brave] local Brave MCP server started')
+  } catch (error) {
+    wss?.close()
+    child.kill()
+    const reason = error instanceof Error ? error.message : String(error)
+    t.skip(`Unable to start Brave MCP server: ${reason}. ${BRAVE_HELP}`)
+    return
+  }
+
+  t.after(async () => {
+    for (const socket of sockets) {
+      try {
+        socket.close()
+      } catch (socketError) {
+        console.warn('[mcp-brave] error closing bridge socket', socketError)
+      }
+    }
+    await new Promise<void>(resolve => {
+      if (wss) {
+        wss.close(() => resolve())
+      } else {
+        resolve()
+      }
+    })
+    if (child) {
+      console.log('[mcp-brave] shutting down spawned Brave MCP server')
+      try {
+        child.stdin?.end()
+      } catch (stdinError) {
+        console.warn('[mcp-brave] error closing stdin', stdinError)
+      }
+      child.kill()
+      await sleep(200)
+    }
+  })
 
   console.log("[mcp-brave] attempting connection to", url)
   const connectWithRetry = async (attempts = requireBraveSuccess ? 10 : 5, delayMs = 1_000): Promise<WebSocket> => {
@@ -429,7 +432,7 @@ test("mcp: brave handshake", { timeout: 30_000 }, async t => {
       try {
         console.log(`[mcp-brave] connect attempt ${attempt}/${attempts}`)
         return await new Promise<WebSocket>((resolve, reject) => {
-          const socket = new WebSocket(url!)
+          const socket = new WebSocket(url)
           const timer = setTimeout(() => {
             socket.terminate()
             reject(new Error("connect timeout"))
@@ -631,3 +634,4 @@ test("mcp: brave handshake", { timeout: 30_000 }, async t => {
     }
   })
 })
+

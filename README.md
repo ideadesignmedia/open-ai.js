@@ -1,27 +1,29 @@
 ﻿# @ideadesignmedia/open-ai.js
 
-Modern helper library for OpenAI-style APIs: chat and text completions, the Responses API, tool calling (including remote MCP), vector stores, fine-tuning, images, Whisper, speech, files, moderation, and more. The helpers stay close to the official REST payloads so you can point the same code at OpenAI's hosted service or a compatible private deployment.
+TypeScript-first helpers for OpenAI-compatible APIs, a unified multi-provider LLM client, and a fully spec-compliant Model Context Protocol (MCP) server/client toolkit. Ship chat completions, Responses API workflows, vector stores, images, audio, and tools (including MCP bridges) without hunting through docs.
 
 ## Table of Contents
-- [Features](#features)
 - [Installation](#installation)
-- [Client Reference](#client-reference)
 - [Configuration](#configuration)
-- [Importing and Quick Start](#importing-and-quick-start)
-- [Working with Multiple Endpoints](#working-with-multiple-endpoints)
-- [Testing](#testing)
-- [Build Output](#build-output)
-- [Troubleshooting](#troubleshooting)
-
----
-
-## Features
-- Typed wrappers around every major OpenAI endpoint, including modern `/v1/responses` and streaming variants.
-- Event-driven `ResponseStream` helper for SSE chat/completion streams.
-- Image helpers that automatically resize input assets via `sharp`.
-- Fine-tuning, vector stores, Whisper transcription/translation, moderation, files, and model catalogue helpers.
-- Works against alternative base URLs (for example llama-cpp) by swapping a single configuration value.
-- Authored in TypeScript with an exported `index.d.ts` and CommonJS build for drop-in consumption.
+- [Quick Start: OpenAI Helpers](#quick-start-openai-helpers)
+  - [Chat and Tool Calling](#chat-and-tool-calling)
+  - [Streaming Responses](#streaming-responses)
+  - [Images, Audio, Files, and Vector Stores](#images-audio-files-and-vector-stores)
+  - [Fine-Tuning and Moderation](#fine-tuning-and-moderation)
+- [Typing Tool Parameters](#typing-tool-parameters)
+- [Working with Alternative Endpoints](#working-with-alternative-endpoints)
+- [Unified LLM Client](#unified-llm-client)
+  - [Provider Setups](#provider-setups)
+  - [Shared Tool Definitions and Model Discovery](#shared-tool-definitions-and-model-discovery)
+  - [Custom Fetch / Transport Overrides](#custom-fetch--transport-overrides)
+  - [End-to-End Provider Tests](#end-to-end-provider-tests)
+- [MCP Server and Client Toolkit](#mcp-server-and-client-toolkit)
+  - [Authoring Custom Tools](#authoring-custom-tools)
+  - [Transport Options: WebSocket, HTTP, STDIO](#transport-options-websocket-http-stdio)
+  - [Bridging LLM Tool Calls to MCP](#bridging-llm-tool-calls-to-mcp)
+  - [Brave Search Integration](#brave-search-integration)
+- [Testing & Scripts](#testing--scripts)
+- [Troubleshooting & Tips](#troubleshooting--tips)
 
 ---
 
@@ -29,436 +31,514 @@ Modern helper library for OpenAI-style APIs: chat and text completions, the Resp
 ```bash
 # npm
 npm install @ideadesignmedia/open-ai.js
+
 # yarn
 yarn add @ideadesignmedia/open-ai.js
+
 # pnpm
 pnpm add @ideadesignmedia/open-ai.js
 ```
 
-> **Native dependency:** [`sharp`](https://sharp.pixelplumbing.com/) ships with the package for image helpers. Make sure your environment can compile native extensions (for example on Alpine Linux or Windows).
+> `sharp` is bundled for image helpers. Ensure your runtime can load native add-ons (Windows users may need the Visual C++ build tools; Alpine users should install `libvips`).
 
 ---
 
-## Client Reference
+## Configuration
 
-### Common Helpers
+Create `config.json` (or use environment variables) with the keys you need. The library auto-loads `config.json` when you import `"@ideadesignmedia/config.js"` in tests or entry files.
 
-- Message(content, role = 'assistant') -> MessagePayload<T>: builds a typed chat message object without mutating the original array.
+```json
+{
+  "OPEN_AI_ENDPOINT": "https://api.openai.com",
+  "OPEN_AI_API_KEY": "sk-...",
+  "OPEN_AI_ORGANIZATION": "",
+  "MODEL_ENDPOINT": "https://llama.yourcompany.net",
+  "API_KEY": "access-token-for-model-endpoint",
+  "BRAVE_API_KEY": "",
+  "ANTHROPIC_API_KEY": "",
+  "GOOGLE_GEMINI_API_KEY": "",
+  "COHERE_API_KEY": "",
+  "MISTRAL_API_KEY": ""
+}
+```
 
-- post(path, data) / get(path) / del(path) -> Promise<JsonValue>: direct HTTP helpers returning typed JSON parsed via @ideadesignmedia/helpers.
+- `OPEN_AI_*` drive the default `OpenAIClient`.
+- `MODEL_ENDPOINT` / `API_KEY` are picked up by helpers or tests when you target an alternative deployment.
+- Unified providers (`UnifiedLLMClient`) look for their respective keys.
+- `BRAVE_API_KEY` lets the MCP test suite spawn the official Brave search server locally.
 
-- postStream(path, payload?) -> Promise<ResponseStream>: opens an SSE stream with the same auth headers as other calls.
+You can also construct clients manually and supply keys/options in code; the config file is just a convenient default.
 
-- postForm(path, formData, parser) -> Promise<T>: uploads multipart payloads (images, audio) and hands the raw body to your parser.
+---
 
-### Text and Chat Completions
-
-- completion(prompt = '', resultCount = 1, stop?, options = { model: 'gpt-4o-mini-instruct' }) -> Promise<TextCompletionResponse>: wraps `/v1/completions` with `CompletionRequestOptions`.
-
-- completionStream(prompt, resultCount = 1, stop?, options?) -> Promise<ResponseStream>: streaming variant of `completion`; emits token deltas via `ResponseStream`.
-
-- chatCompletion(messages = [], resultCount = 1, stop?, options = { model: 'gpt-4o-mini' }) -> Promise<ChatCompletionResponse>: wraps `/v1/chat/completions`.
-
-- chatCompletionStream(messages = [], resultCount = 1, stop?, options = { model: 'gpt-4o-mini' }) -> Promise<ResponseStream>: streaming chat completions.
-
-Example with function tools:
+## Quick Start: OpenAI Helpers
 
 ```ts
-import OpenAIClient, { Message, type ChatCompletionsFunctionTool } from '@ideadesignmedia/open-ai.js'
+import OpenAIClient, { Message } from '@ideadesignmedia/open-ai.js'
 
-const client = new OpenAIClient({ key: process.env.OPEN_AI_API_KEY! })
+const openai = new OpenAIClient({
+  apiKey: process.env.OPEN_AI_API_KEY,
+  organization: process.env.OPEN_AI_ORGANIZATION
+})
+```
 
-const tools: ChatCompletionsFunctionTool[] = [
-  {
-    type: 'function',
-    function: {
-      name: 'get_weather',
-      description: 'Get current weather for a city',
-      parameters: {
-        type: 'object',
-        properties: {
-          city: { type: 'string', description: 'City name' },
-          units: { type: 'string', enum: ['metric', 'imperial'] }
-        },
-        required: ['city']
-      }
+### Chat and Tool Calling
+
+```ts
+const weatherTool = {
+  type: 'function' as const,
+  function: {
+    name: 'get_weather',
+    description: 'Return the temperature for a city',
+    parameters: {
+      type: 'object',
+      properties: {
+        city: { type: 'string', description: 'City name' },
+        units: { type: 'string', enum: ['metric', 'imperial'] }
+      },
+      required: ['city']
     }
   }
-]
+}
 
-const reply = await client.chatCompletion(
-  [Message('What is the weather in Paris today?', 'user')],
+const response = await openai.chatCompletion(
+  [
+    Message('You are a weather assistant.', 'system'),
+    Message('What is the weather in Paris?', 'user')
+  ],
   1,
   undefined,
   {
     model: 'gpt-4o-mini',
-    tools,
-    tool_choice: 'auto',
-    parallel_tool_calls: true
+    tools: [weatherTool],
+    tool_choice: 'auto'
   }
 )
+
+const firstChoice = response.choices[0]
+if (firstChoice.message.tool_calls?.length) {
+  // Call your real tool, then feed the result back with another Message('tool payload', 'tool')
+}
 ```
 
-Typed tool parameters and inference:
+### Streaming Responses
+
+Use the `ResponseStream` helper for streaming chat completions or the Responses API.
 
 ```ts
-import OpenAIClient, {
-  Message,
+const stream = await openai.chatCompletionStream(
+  [Message('Stream a haiku about MCP.', 'user')],
+  1,
+  undefined,
+  { model: 'gpt-4o-mini' }
+)
+
+stream.onData = (delta) => process.stdout.write(delta ?? '')
+stream.onError = (err) => console.error('[stream-error]', err)
+stream.onComplete = (chunks) => {
+  console.log('\nfinished', chunks.join(''))
+}
+```
+
+Responses API example (structured output + streaming):
+
+```ts
+const responseStream = await openai.createResponseStream({
+  model: 'gpt-4.1-mini',
+  input: [
+    { role: 'system', content: 'Return JSON with `summary` and `tags`.' },
+    { role: 'user', content: 'Summarise MCP transports.' }
+  ],
+  response_format: {
+    type: 'json_schema',
+    json_schema: {
+      name: 'brief',
+      schema: {
+        type: 'object',
+        required: ['summary', 'tags'],
+        properties: {
+          summary: { type: 'string' },
+          tags: { type: 'array', items: { type: 'string' } }
+        }
+      }
+    }
+  }
+})
+
+responseStream.onComplete = chunks => {
+  const payload = JSON.parse(chunks.join(''))
+  console.log(payload.summary, payload.tags)
+}
+```
+
+### Images, Audio, Files, and Vector Stores
+
+```ts
+// Images (uses sharp under the hood)
+const image = await openai.generateImage({
+  prompt: 'Blueprint of an MCP-compliant server rack',
+  size: '512x512'
+})
+
+// Text-to-speech
+const speech = await openai.generateSpeech({
+  model: 'gpt-4o-mini-tts',
+  input: 'Welcome to the MCP operations center.'
+})
+
+// Whisper transcription
+const transcript = await openai.getTranscription({
+  file: createReadStream('meeting.mp3'),
+  model: 'whisper-1'
+})
+
+// Files and vector stores
+const file = await openai.uploadFile('knowledge.jsonl', 'fine-tune')
+const store = await openai.createVectorStore({ name: 'mcp-knowledge' })
+await openai.addFileToVectorStore(store.id, file.id)
+const search = await openai.searchVectorStore(store.id, { query: 'tools handshake' })
+```
+
+### Fine-Tuning and Moderation
+
+```ts
+const job = await openai.createFineTuningJob({
+  model: 'gpt-4o-mini',
+  training_file: file.id
+})
+
+const moderation = await openai.moderation({
+  model: 'omni-moderation-latest',
+  input: 'Quick MCP status recap'
+})
+
+if (moderation.results[0].flagged) {
+  console.log('Content needs review')
+}
+```
+
+---
+
+## Typing Tool Parameters
+
+Use `defineObjectSchema` and `defineFunctionTool` to author JSON Schema payloads that double as TypeScript types.
+
+```ts
+import {
   defineFunctionTool,
   defineObjectSchema,
   type InferParams,
   type InferToolArguments
 } from '@ideadesignmedia/open-ai.js'
 
-const bookAppointmentParameters = defineObjectSchema({
+const scheduleParameters = defineObjectSchema({
   type: 'object',
   properties: {
-    timeslot: { type: 'integer', description: '24h hour (e.g. 16 for 4 PM)' },
-    Date: { type: 'string', description: 'today | tomorrow | YYYY-MM-DD' },
-    name_of_doctor: { type: 'string', description: 'Normalized doctor name (e.g. "smith")' }
+    date: { type: 'string', format: 'date' },
+    slot: { type: 'integer', minimum: 0, maximum: 23 },
+    reason: { type: 'string' }
   },
-  required: ['timeslot', 'Date', 'name_of_doctor'],
+  required: ['date', 'slot'],
   additionalProperties: false
 } as const)
 
-const bookAppointmentTool = defineFunctionTool({
+const scheduleTool = defineFunctionTool({
   type: 'function',
   function: {
-    name: 'get_time_date_doctor_book_appointement',
-    description: 'Fix an appointment with a doctor for a given date and time',
-    parameters: bookAppointmentParameters
+    name: 'schedule_incident_review',
+    description: 'Book time to discuss an MCP incident',
+    parameters: scheduleParameters
   }
 } as const)
 
-type BookAppointmentArgs = InferParams<typeof bookAppointmentParameters>
-type BookAppointmentCallArgs = InferToolArguments<typeof bookAppointmentTool>
+type ScheduleArguments = InferParams<typeof scheduleParameters>
+type ScheduleCall = InferToolArguments<typeof scheduleTool>
 
-const tools = [bookAppointmentTool] as const
+const handler = async (args: ScheduleArguments) => ({
+  confirmation: `set for ${args.date} ${args.slot}:00`
+})
+```
 
-const client = new OpenAIClient({ key: process.env.OPEN_AI_API_KEY! })
-const reply = await client.chatCompletion(
-  [Message('Book an appointment with Dr Smith for tomorrow at 4 PM', 'user')],
-  1,
-  undefined,
+The same `scheduleTool` can be passed to chat completions, the Responses API, or registered as an MCP tool handler. Type inference keeps the handler signature aligned with your schema.
+
+---
+
+## Working with Alternative Endpoints
+
+Point `OpenAIClient` at any OpenAI-compatible deployment by supplying `baseURL` and `apiKey` options.
+
+```ts
+const alt = new OpenAIClient({
+  apiKey: process.env.API_KEY,
+  baseURL: process.env.MODEL_ENDPOINT,
+  organization: undefined
+})
+
+const resp = await alt.completion('Hello alt endpoint', 1, undefined, {
+  model: 'llama-3-instruct'
+})
+```
+
+All helpers (including streaming, images, files, vector stores) reuse the same HTTP client, so overriding once affects every call. Tests such as `tests/openai.integration.test.ts` will also respect `MODEL_ENDPOINT`/`API_KEY` when present.
+
+---
+
+## Unified LLM Client
+
+`UnifiedLLMClient` gives you one interface across OpenAI, Anthropic, Google Gemini, Cohere, and Mistral. Messages, tool definitions, and metadata share a single TypeScript shape so routing logic stays provider agnostic.
+
+```ts
+import {
+  UnifiedLLMClient,
+  type UnifiedChatRequest,
+  type UnifiedModelInfo
+} from '@ideadesignmedia/open-ai.js'
+
+const baseRequest: UnifiedChatRequest = {
+  model: 'gpt-4o-mini',
+  messages: [
+    { role: 'system', content: 'Reply tersely.' },
+    { role: 'user', content: 'Give me an MCP elevator pitch.' }
+  ]
+}
+
+const openaiClient = new UnifiedLLMClient({
+  provider: 'openai',
+  apiKey: process.env.OPEN_AI_API_KEY!,
+  openai: { organization: process.env.OPEN_AI_ORGANIZATION }
+})
+
+const answer = await openaiClient.generateChat(baseRequest)
+console.log(answer.content)
+```
+
+### Provider Setups
+
+```ts
+// Anthropic
+const anthropic = new UnifiedLLMClient({
+  provider: 'anthropic',
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  anthropic: { version: '2023-06-01' }
+})
+await anthropic.generateChat({
+  model: 'claude-3-haiku-20240307',
+  messages: [{ role: 'user', content: 'List MCP transports.' }]
+})
+
+// Google Gemini
+const gemini = new UnifiedLLMClient({
+  provider: 'google',
+  apiKey: process.env.GOOGLE_GEMINI_API_KEY!
+})
+await gemini.generateChat({
+  model: 'models/gemini-pro',
+  messages: [{ role: 'user', content: 'Name a compliant MCP client.' }]
+})
+
+// Cohere
+const cohere = new UnifiedLLMClient({
+  provider: 'cohere',
+  apiKey: process.env.COHERE_API_KEY!
+})
+await cohere.generateChat({
+  model: 'command-r',
+  messages: [{ role: 'user', content: 'Return a JSON summary of MCP.' }]
+})
+
+// Mistral
+const mistral = new UnifiedLLMClient({
+  provider: 'mistral',
+  apiKey: process.env.MISTRAL_API_KEY!
+})
+await mistral.generateChat({
+  model: 'mistral-small-latest',
+  messages: [{ role: 'user', content: 'Give one benefit of MCP.' }]
+})
+```
+
+### Shared Tool Definitions and Model Discovery
+
+All providers accept the same `tools` array if the upstream API supports function calling.
+
+```ts
+const tools = [
   {
-    model: 'gpt-4o-mini',
-    tools,
-    tool_choice: { type: 'function', function: { name: bookAppointmentTool.function.name } }
-  }
-)
-
-for (const choice of reply.choices) {
-  for (const tc of choice.message.tool_calls ?? []) {
-    if (tc.function.name === bookAppointmentTool.function.name) {
-      const args = JSON.parse(tc.function.arguments) as BookAppointmentCallArgs
-      // args.timeslot -> number, args.Date -> string, args.name_of_doctor -> string
+    name: 'lookup_incident',
+    description: 'Fetch incident details',
+    parameters: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id']
     }
   }
+]
+
+const routed = new UnifiedLLMClient({ provider: 'openai', apiKey: process.env.OPEN_AI_API_KEY! })
+const result = await routed.generateChat({
+  ...baseRequest,
+  tools,
+  toolChoice: 'auto'
+})
+
+if (routed.supportsStreaming()) {
+  const stream = routed.streamChat({ ...baseRequest, model: 'gpt-4o-mini' })
+  for await (const chunk of stream) {
+    if (chunk.type === 'content') process.stdout.write(chunk.delta)
+  }
 }
+
+const models: UnifiedModelInfo[] = await routed.listModels()
+models.forEach(model => console.log(`${model.provider}: ${model.name}`))
 ```
 
-### Responses API
+### Custom Fetch / Transport Overrides
 
-- createResponse(params: ResponseCreateParams) -> Promise<ResponseObject>: calls `/v1/responses`.
-
-- createResponseStream(params: ResponseCreateParams) -> Promise<ResponseStream>: streaming Responses API helper.
-
-- getResponse(id) -> Promise<ResponseObject>: fetches a stored response.
-
-- cancelResponse(id) -> Promise<ResponseObject>: cancels a background response job.
-
-### Audio
-
-- generateSpeech(input, voice = 'nova', options = { model: 'tts-1', responseFormat: 'mp3', speed: 1 }) -> Promise<AudioSpeechResponse>: text-to-speech helper.
-
-- getTranscription<TFormat extends WhisperResponseFormat = 'json'>(file, prompt?, language?, responseFormat?, temperature = 0) -> Promise<WhisperTranscriptionResult<TFormat>>: uploads audio to `/v1/audio/transcriptions`.
-
-- getTranslation<TFormat extends WhisperResponseFormat = 'json'>(file, prompt?, responseFormat?, temperature = 0) -> Promise<WhisperTranscriptionResult<TFormat>>: translates audio via `/v1/audio/translations`.
-
-### Images
-
-- generateImage(prompt, resultCount = 1, size = 0, responseFormat = 'url', user?) -> Promise<ImageResponse>: wraps `/v1/images/generations`.
-
-- editImage(imagePath, prompt, mask?, resultCount = 1, size = 0, responseFormat = 'url', user?) -> Promise<ImageResponse>: resizes assets with `sharp` before calling `/v1/images/edits`.
-
-- getImageVariations(imagePath, resultCount = 1, size = 0, responseFormat = 'url', user?) -> Promise<ImageResponse>: variation helper.
-
-### Embeddings
-
-- getEmbedding(input, model = 'text-embedding-3-small', user?) -> Promise<EmbeddingResponse>: wraps `/v1/embeddings`.
-
-### Files
-
-- uploadFile(path, purpose = 'fine-tune') -> Promise<FileObject>: multipart upload helper.
-
-- getFiles() -> Promise<FileListResponse>: lists uploaded files.
-
-- getFile(id) -> Promise<FileObject>: retrieves metadata.
-
-- getFileContent(id) -> Promise<string>: returns decoded text for `/content`.
-
-- deleteFile(id) -> Promise<DeleteResponse>: deletes uploaded content.
-
-### Vector Stores
-
-- createVectorStore(name?, metadata?) -> Promise<VectorStore>: creates a store.
-
-- addFileToVectorStore(storeId, fileId, attributes = {}) -> Promise<VectorStoreFileAssociation>: attaches a file.
-
-- searchVectorStore(storeId, query, options?) -> Promise<VectorStoreSearchResponse>: semantic search helper.
-
-- getVectorStore(storeId) -> Promise<VectorStore>: fetches detail.
-
-- deleteVectorStore(storeId) -> Promise<VectorStoreDeletion>: deletes a store.
-
-### Fine-tuning
-
-- listFineTuningJobs() -> Promise<ListResponse<FineTuningJob>>: wraps `/v1/fine_tuning/jobs`.
-
-- createFineTuningJob(payload) -> Promise<FineTuningJob>: starts a job.
-
-- retrieveFineTuningJob(id) -> Promise<FineTuningJob>: fetches job status.
-
-- cancelFineTuningJob(id) -> Promise<FineTuningJob>: cancels a running job.
-
-- listFineTuningJobEvents(id) -> Promise<ListResponse<FineTuningJobEvent>>: event stream.
-
-- listFineTuningJobCheckpoints(id) -> Promise<ListResponse<FineTuningJobCheckpoint>>: retrieves checkpoints.
-
-### Moderation
-
-- moderation(input, model = 'text-moderation-latest') -> Promise<ModerationResponse>: wraps `/v1/moderations`.
-
-### Models
-
-- getModels() -> Promise<ListResponse<ModelInfo>>: lists available models.
-
-- getModel(modelId) -> Promise<ModelInfo>: fetches a single model description.
-
-### ResponseStream basics
-
-- ResponseStream exposes `onData`, `onComplete`, and `onError` callbacks along with an `EventEmitter` for streaming completions. Each chunk is an array of string deltas; `onComplete` receives the concatenated output when the stream finishes.
-
-## Configuration
-
-The v2 release introduces an instantiated client so you can bind helpers to a specific endpoint + credential set. Configuration still honours environment variables and the optional `@ideadesignmedia/arguments.js` CLI shim, but you pass the settings explicitly when you construct the client.
+Every provider accepts an optional `fetch` implementation, headers, or base URL.
 
 ```ts
-import OpenAIClient from '@ideadesignmedia/open-ai.js'
+const proxyFetch: typeof fetch = async (input, init) => {
+  const next = new Request(String(input), {
+    ...init,
+    headers: { ...(init?.headers ?? {}), 'X-Debug-Request': 'true' }
+  })
+  return fetch(next)
+}
 
-const openAI = new OpenAIClient({
-  host: 'https://api.openai.com',
-  key: process.env.OPEN_AI_API_KEY!,
-  organization: process.env.OPEN_AI_ORGANIZATION
+const custom = new UnifiedLLMClient({
+  provider: 'anthropic',
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+  anthropic: { fetch: proxyFetch, baseURL: 'https://api.anthropic.com/v1' }
 })
 ```
 
-`OpenAIClientConfig` accepts three fields today:
+### End-to-End Provider Tests
 
-- `host` - base URL (defaults to `process.env.OPEN_AI_ENDPOINT` or `https://api.openai.com`).
-- `key` - bearer token used for every request. Required unless it can be resolved from `OPEN_AI_SECRET`/`OPEN_AI_API_KEY` via env/arguments.
-- `organization` - optional organization header for multi-tenant OpenAI accounts.
-
-Any property you omit falls back to environment variables or the `@ideadesignmedia/arguments.js` module, so existing deployments that rely on env-only configuration keep working.
-
-The integration tests still use a JSON file so they can run against two different backends in a single pass.
-
-```jsonc
-// config-sample.json
-{
-  "OPEN_AI_ENDPOINT": "https://api.openai.com",
-  "OPEN_AI_API_KEY": "sk-...",
-  "OPEN_AI_ORGANIZATION": "org-...",
-  "MODEL_ENDPOINT": "https://my-private-endpoint/v1",
-  "API_KEY": "priv-..."
-}
-```
-
-Copy the sample to `config.json` (ignored by Git and npm) and populate whichever credentials you use:
-
-- `OPEN_AI_*` values drive the client you instantiate for OpenAI's hosted platform.
-- `MODEL_ENDPOINT` / `API_KEY` describe an optional private deployment. If both are set, the test suite automatically exercises every helper against **both** backends in a single pass.
-
-You can still override values at runtime with environment variables if you prefer not to hardcode secrets:
+`tests/unified.llm.test.ts` exercises the `UnifiedLLMClient` against real Anthropic, Google Gemini, Cohere, and Mistral APIs. Provide the corresponding keys (set in `config.json` or environment vars) and run:
 
 ```bash
-export OPEN_AI_ENDPOINT="https://api.openai.com"
-export OPEN_AI_API_KEY="sk-your-hosted-key"
-export MODEL_ENDPOINT="https://llama.example.com/v1"
-export API_KEY="priv-your-private-key"
+yarn node --require ts-node/register --test tests/unified.llm.test.ts
 ```
 
-Missing `key` values (after fallbacks) throw immediately during client construction.
-
-## Importing and Quick Start
-
-### TypeScript / ES modules
-
-```ts
-import OpenAIClient, { Message } from '@ideadesignmedia/open-ai.js'
-
-const client = new OpenAIClient({
-  key: process.env.OPEN_AI_API_KEY!,
-  organization: process.env.OPEN_AI_ORGANIZATION
-})
-
-const reply = await client.chatCompletion([
-  Message('Hello!', 'user')
-])
-
-console.log(reply.choices?.[0]?.message?.content)
-```
-
-All helpers are exposed as methods on the instance (`client.completion`, `client.createResponseStream`, `client.generateImage`, ...). The `Message` factory remains exported separately for convenience, and is also available as `client.Message` if you prefer instance-only access.
-
-### CommonJS
-
-```js
-const OpenAIClient = require('@ideadesignmedia/open-ai.js').default
-const { Message } = require('@ideadesignmedia/open-ai.js')
-
-async function main() {
-  const client = new OpenAIClient({ key: process.env.OPEN_AI_API_KEY })
-  const reply = await client.chatCompletion([Message('Hello!', 'user')])
-  console.log(reply.choices?.[0]?.message?.content)
-}
-
-main().catch(console.error)
-```
-
-You can instantiate as many clients as you need - each one keeps its own host/key combo so concurrent requests to different providers stay isolated.
-
-## Working with Multiple Endpoints
-
-Create one `OpenAIClient` per backend and call the same helpers through each instance:
-
-```ts
-import OpenAIClient, { Message } from '@ideadesignmedia/open-ai.js'
-
-const hosted = new OpenAIClient({
-  key: process.env.OPEN_AI_API_KEY!,
-  organization: process.env.OPEN_AI_ORGANIZATION
-})
-
-const privateDeployment = new OpenAIClient({
-  host: process.env.MODEL_ENDPOINT!,
-  key: process.env.API_KEY!
-})
-
-const prompt = [Message('Summarise the latest release notes', 'user')]
-
-const hostedReply = await hosted.chatCompletion(prompt)
-const privateReply = await privateDeployment.chatCompletion(prompt)
-```
-
-Because each client caches its own resolved configuration you can run these calls in parallel without mutating global state. The integration tests take the same approach: they load credentials from `config.json`, instantiate two clients, and run every helper against both targets.
-
-## Testing
-
-The integration suite exercises every helper against each configured backend. With `config.json` populated it runs once against OpenAI's hosted API and once against your private endpoint.
-
-```bash
-
-# Run all stages (~3 minutes when both endpoints are available)
-
-yarn test
-
-# Focus on a single stage and target
-
-yarn test -- --test-name-pattern "private: Image helpers"
-
-```
-
-Each sub-test logs `[INFO]`, `[PASS]`, or `[SKIP]` diagnostics so you can see which features are supported by the private deployment. When an API is unavailable (for example moderation on a private model), the diagnostic is recorded without failing the run.
+Each sub-test lists models, chooses an accessible candidate, runs a chat request, and logs responses. Failures due to quota/auth produce skips with contextual messages so CI stays informative without hard failing your pipeline.
 
 ---
 
-## Build Output
+## MCP Server and Client Toolkit
 
-The package ships transpiled CommonJS in `dist/index.js` and auto-generated declaration files (with all JSDoc preserved). Build locally with:
+The MCP helpers implement the latest protocol spec (2025-06-18). You can ship servers that expose tools/resources/prompts/models and clients that connect over WebSocket, HTTP long-polling, or STDIO.
 
-```bash
-yarn build
-```
-
-`dist/index.js` and `dist/index.d.ts` are tracked so consumers installing from GitHub receive the compiled JavaScript and typings.
-
----
-
-## Troubleshooting
-
-- **`OPEN_AI_API_KEY` missing** - set `OPEN_AI_API_KEY` (or `OPEN_AI_SECRET`) before importing the helpers.
-
-- **Deprecation warning for `util.isArray`** - the entrypoint replaces Node's deprecated helper; ensure you are using the exported module rather than bundling a local copy of `form-data` first.
-
-- **Streaming never completes** - confirm the target endpoint actually emits SSE responses and that intermediaries (CDNs, proxies) are not buffering them.
-
-- **Image helpers fail on private endpoints** - some deployments only implement a subset of the OpenAI API surface; check your provider's documentation for supported routes.
-
-If you spot a drift between these helpers and the latest OpenAI payloads, open an issue with the sample JSON payload so we can keep things in sync.
-
-### MCP Server & Client
+### Authoring Custom Tools
 
 ```ts
 import {
   defineFunctionTool,
   defineObjectSchema,
   McpServer,
-  McpClient,
   type McpServerOptions
 } from '@ideadesignmedia/open-ai.js'
 
-const weatherTool = defineFunctionTool({
+const incidentTool = defineFunctionTool({
   type: 'function',
   function: {
-    name: 'get_weather',
-    description: 'Return the current temperature for a city',
+    name: 'get_incident_status',
+    description: 'Look up an incident by ticket id',
     parameters: defineObjectSchema({
       type: 'object',
-      properties: {
-        city: { type: 'string', description: 'City to query' }
-      },
-      required: ['city']
+      properties: { ticket: { type: 'string' } },
+      required: ['ticket']
     } as const)
   }
 } as const)
 
 const server = new McpServer({
-  port: 3030,
+  instructions: 'Incident MCP server',
   tools: [
     {
-      tool: weatherTool,
-      handler: async ({ city }) => ({ city, temperatureC: 22 })
+      tool: incidentTool,
+      handler: async ({ ticket }) => ({ ticket, status: 'RESOLVED' })
     }
-  ]
+  ],
+  resources: [{ id: 'runbook', name: 'Incident runbook' }],
+  readResource: async () => 'Always update status channels.',
+  prompts: [{ name: 'postmortem', description: 'Generate postmortem template' }],
+  getPrompt: async () => ({ text: '# Postmortem\n- Summary\n- Timeline' }),
+  models: [{ name: 'playground', description: 'Demo model' }],
+  selectModel: (name) => console.log('model selected:', name)
 } satisfies McpServerOptions)
-
-await server.start()
-
-const client = new McpClient({ url: 'ws://localhost:3030/mcp' })
-await client.connect()
-
-const availableTools = await client.listTools()
-const weather = await client.callTool('get_weather', { city: 'Paris' })
 ```
 
-You can hand the same `weatherTool` definition to `chatCompletion({ tools: [weatherTool] })`, wire the tool handler into `McpServer`, and forward tool calls/responses between the LLM and your hosted MCP tool. The server now supports all three transports defined in the 2025-06-18 MCP spec: set `transports` to any combination of `['websocket', 'http', 'stdio']` and provide optional `stdio` streams when you want to run over pipes.
+### Transport Options: WebSocket, HTTP, STDIO
 
-On the client side, pass `transport: 'websocket' | 'http' | 'stdio'` to `new McpClient(...)` (with either a URL or STDIO stream/command). The helper automatically negotiates `protocolVersion: '2025-06-18'`, sends the follow-up `initialized` notification via `client.sendInitialized()`, and keeps the HTTP `MCP-Protocol-Version` header in sync.
+```ts
+// WebSocket listener
+await server.start({ websocket: { host: '127.0.0.1', port: 3030, path: '/mcp' } })
 
-### Brave MCP
+// HTTP listener
+await server.start({ http: { host: '127.0.0.1', port: 3333, path: '/mcp' } })
 
-To exercise the Brave Search MCP helpers locally:
+// STDIO bridge
+const clientToServer = new PassThrough()
+const serverToClient = new PassThrough()
+await server.start({ stdio: { input: clientToServer, output: serverToClient } })
 
-1. Export your Brave API key.
-2. Run the official MCP server:
-   ```bash
-   BRAVE_API_KEY=sk-... npx -y @brave/brave-search-mcp-server
-   ```
-3. Point the tests/client at the instance:
-   ```bash
-   export MCP_BRAVE_WS_URL="ws://127.0.0.1:3333/ws"
-   yarn test-mcp
-   ```
+const client = new McpClient({
+  transport: 'websocket',
+  url: 'ws://127.0.0.1:3030/mcp'
+})
+await client.connect()
+await client.initialize({ clientInfo: { name: 'dashboard', version: '1.2.0' } })
+await client.sendInitialized()
 
-If `MCP_BRAVE_WS_URL` is not set (or the endpoint is unreachable) the Brave portions of the tests automatically skip.
+const tools = await client.listTools()
+const incident = await client.callTool('get_incident_status', { ticket: 'INC-42' })
+```
+
+### Bridging LLM Tool Calls to MCP
+
+1. Register your tool schema once (`incidentTool`).
+2. Hand it to the LLM via `chatCompletion({ tools: [incidentTool] })`.
+3. When the LLM emits a tool call, forward it to the MCP server using `client.callTool(...)`.
+4. Send the MCP response back to the LLM as a tool message.
+
+This pattern keeps LLM glue thin, with full MCP logging and transport flexibility.
+
+### Brave Search Integration
+
+If `BRAVE_API_KEY` is set, `tests/mcp.integration.test.ts` will:
+
+1. Allocate a free local port.
+2. Spawn `@brave/brave-search-mcp-server` via `npx -y` on STDIO.
+3. Bridge STDIO <-> WebSocket so our `McpClient` sees a normal socket.
+4. Run a handshake and issue a `search` request.
+
+Run everything with:
+
+```bash
+yarn test-mcp
+```
+
+If Brave is unavailable the suite logs why and skips gracefully.
+
+---
+
+## Testing & Scripts
+
+- `yarn build` – type-check and emit `dist/`.
+- `yarn test-openai` – exhaustive OpenAI helper integration (completions, responses, files, fine-tuning, images, moderation, etc.).
+- `yarn test-mcp` – MCP compliance harness + Brave Search integration.
+- `node --require ts-node/register --test tests/unified.llm.test.ts` – Unified client tests against Anthropic, Gemini, Cohere, Mistral (skips automatically on auth/quota issues).
+
+Each test file logs rich diagnostics (`[mcp-test]`, `[unified-google]`, etc.) so you can follow handshake and API behavior in CI.
+
+---
+
+## Troubleshooting & Tips
+
+- **401/403 or quota errors:** Most integration tests convert these into skips; inspect the console logs for `HTTP 401`, `quota`, or `billing` messages before re-running.
+- **Streaming stalls:** Ensure your environment allows outbound SSE/WebSocket connections; behind strict proxies provide a custom `fetch` implementation.
+- **Native builds failing (`sharp`):** Install the prerequisite build toolchain or use prebuilt Docker images.
+- **Alt providers missing streaming:** Only the OpenAI provider currently implements `streamChat`; others throw a descriptive error until their APIs expose compatible transports.
+- **Brave integration stuck:** Double-check `BRAVE_API_KEY` and ensure `npx` can download `@brave/brave-search-mcp-server`.
+
+Happy building! The project directory includes additional PDFs under `docs/` that detail MCP compliance and cross-provider LLM guidance if you need deeper architectural references.

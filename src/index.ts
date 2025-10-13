@@ -147,6 +147,7 @@ class OpenAIClient implements OpenAIHelpers {
 export { OpenAIClient, Message }
 export { defineFunctionTool, defineObjectSchema } from './tools'
 export { McpClient, McpServer, JsonRpcError } from './mcp'
+export { UnifiedLLMClient } from './unified'
 
 export type {
   AudioSpeechResponse,
@@ -205,6 +206,8 @@ export type {
 
 export type { McpClientOptions } from './mcp/client'
 export type { McpServerOptions, McpToolHandlerOptions, McpModel, McpMetadata } from './mcp/server'
+export type { UnifiedChatRequest, UnifiedChatResponse, UnifiedChatStreamChunk, UnifiedModelInfo } from './providers/types'
+export type { UnifiedLLMClientOptions } from './unified'
 
 export default OpenAIClient
 
