@@ -1,5 +1,6 @@
 
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http"
+import { randomUUID } from "node:crypto"
 import { WebSocketServer, WebSocket } from "ws"
 
 import type {
@@ -88,6 +89,12 @@ export interface McpServerOptions<
 const DEFAULT_PORT = 3030
 const DEFAULT_PATH = "/mcp"
 const MCP_PROTOCOL_VERSION = "2025-06-18"
+const SESSION_HEADER = "Mcp-Session-Id"
+
+interface SessionState {
+  id?: string
+  selectedModel?: string
+}
 
 class McpServer<
   THandlers extends ReadonlyArray<McpToolHandlerOptions<any>> = ReadonlyArray<McpToolHandlerOptions<any>>
@@ -97,7 +104,6 @@ class McpServer<
   private readonly serverInfo = { name: "open-ai.js-mcp", version: "0.1.0" }
   private readonly transports: Set<McpServerTransport>
   private httpServer?: HttpServer
-  private selectedModel?: string
   private httpServerOwned = false
   private wss?: WebSocketServer
   private httpHandler?: (req: IncomingMessage, res: ServerResponse) => void
@@ -106,6 +112,8 @@ class McpServer<
   private stdioBuffer = ""
   private stdioListener?: (chunk: Buffer | string) => void
   private started = false
+  private readonly httpSessions = new Map<string, SessionState>()
+  private readonly globalSession: SessionState = {}
 
   constructor(options: McpServerOptions<THandlers> = {}) {
     this.options = options
@@ -195,15 +203,17 @@ class McpServer<
       this.stdioBuffer = ""
     }
 
-    this.selectedModel = undefined
+    this.httpSessions.clear()
+    this.globalSession.selectedModel = undefined
     this.started = false
   }
 
   private bindWebSocket(ws: WebSocket): void {
+    const session: SessionState = {}
     ws.on("message", async raw => {
       try {
         const request = JSON.parse(raw.toString()) as JsonRpcRequest
-        const response = await this.handleMessage(request)
+        const response = await this.handleMessage(request, session)
         if (response && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify(response))
         }
@@ -243,7 +253,7 @@ class McpServer<
         if (rawLine.trim().length > 0) {
           try {
             const request = JSON.parse(rawLine) as JsonRpcRequest
-            void this.handleMessage(request).then(response => {
+            void this.handleMessage(request, this.globalSession).then(response => {
               if (response && this.stdioOutput) {
                 this.stdioOutput.write(`${JSON.stringify(response)}\n`)
               }
@@ -268,6 +278,20 @@ class McpServer<
       return
     }
 
+    let sessionId = req.headers[SESSION_HEADER.toLowerCase()]
+    if (Array.isArray(sessionId)) {
+      sessionId = sessionId[0]
+    }
+    sessionId = typeof sessionId === "string" && sessionId.trim().length > 0 ? sessionId.trim() : undefined
+    if (!sessionId) {
+      sessionId = randomUUID()
+    }
+    let session = this.httpSessions.get(sessionId)
+    if (!session) {
+      session = { id: sessionId }
+      this.httpSessions.set(sessionId, session)
+    }
+
     const chunks: Buffer[] = []
     req.on("data", chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
 
@@ -276,9 +300,11 @@ class McpServer<
     try {
       const payload = Buffer.concat(chunks).toString() || "{}"
       const request = JSON.parse(payload) as JsonRpcRequest
-      const response = await this.handleMessage(request)
+      const response = await this.handleMessage(request, session)
       if (!response) {
         res.statusCode = 204
+        res.setHeader(SESSION_HEADER, sessionId)
+        res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
         res.end()
         return
       }
@@ -286,10 +312,13 @@ class McpServer<
       res.statusCode = 200
       res.setHeader("Content-Type", "application/json")
       res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
+      res.setHeader(SESSION_HEADER, sessionId)
       res.end(body)
     } catch (error) {
       res.statusCode = 400
       res.setHeader("Content-Type", "application/json")
+      res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
+      res.setHeader(SESSION_HEADER, sessionId)
       res.end(
         JSON.stringify({
           jsonrpc: "2.0",
@@ -300,7 +329,7 @@ class McpServer<
     }
   }
 
-  private async handleMessage(request: JsonRpcRequest): Promise<JsonRpcResponse | undefined> {
+  private async handleMessage(request: JsonRpcRequest, session: SessionState = this.globalSession): Promise<JsonRpcResponse | undefined> {
     const id = request.id ?? null
     const respond = request.id !== undefined && request.id !== null
 
@@ -314,7 +343,7 @@ class McpServer<
     if (method === "initialize") {
       const clientVersion = typeof request.params?.protocolVersion === "string" ? request.params.protocolVersion : undefined
       const negotiatedVersion = clientVersion ?? MCP_PROTOCOL_VERSION
-      this.selectedModel = undefined
+      session.selectedModel = undefined
       const capabilities: Record<string, JsonValue> = {
         tools: { list: true, call: true },
         resources: { list: true, read: !!this.options.readResource },
@@ -333,6 +362,11 @@ class McpServer<
       }
       if (this.options.instructions !== undefined) {
         result.instructions = this.options.instructions
+      }
+      if (session.id) {
+        result.session = { id: session.id }
+        result.sessionId = session.id
+        result.session_id = session.id
       }
       return success(result)
     }
@@ -451,7 +485,7 @@ class McpServer<
       if (this.options.selectModel) {
         await this.options.selectModel(name)
       }
-      this.selectedModel = name
+      session.selectedModel = name
       return success({ name })
     }
 
