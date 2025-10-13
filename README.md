@@ -1,10 +1,10 @@
 ﻿# @ideadesignmedia/open-ai.js
 
-TypeScript-first helpers for OpenAI-compatible APIs, a unified multi-provider LLM client, and a fully spec-compliant Model Context Protocol (MCP) server/client toolkit. Ship chat completions, Responses API workflows, vector stores, images, audio, and tools (including MCP bridges) without hunting through docs.
+TypeScript-first helpers for OpenAI‑compatible APIs, a unified multi‑provider LLM client, and a spec‑compliant Model Context Protocol (MCP) server/client toolkit. Use one ergonomic, strongly typed surface for chat, Responses API, tools, vector stores, images, audio, and more.
 
 ## Table of Contents
 - [Installation](#installation)
-- [Configuration](#configuration)
+- [Importing](#importing)
 - [Quick Start: OpenAI Helpers](#quick-start-openai-helpers)
   - [Chat and Tool Calling](#chat-and-tool-calling)
   - [Streaming Responses](#streaming-responses)
@@ -14,15 +14,12 @@ TypeScript-first helpers for OpenAI-compatible APIs, a unified multi-provider LL
 - [Working with Alternative Endpoints](#working-with-alternative-endpoints)
 - [Unified LLM Client](#unified-llm-client)
   - [Provider Setups](#provider-setups)
-  - [Shared Tool Definitions and Model Discovery](#shared-tool-definitions-and-model-discovery)
+  - [Shared Tools and Model Discovery](#shared-tools-and-model-discovery)
   - [Custom Fetch / Transport Overrides](#custom-fetch--transport-overrides)
-  - [End-to-End Provider Tests](#end-to-end-provider-tests)
 - [MCP Server and Client Toolkit](#mcp-server-and-client-toolkit)
   - [Authoring Custom Tools](#authoring-custom-tools)
-  - [Transport Options: WebSocket, HTTP, STDIO](#transport-options-websocket-http-stdio)
+  - [Transports: WebSocket, HTTP, STDIO](#transports-websocket-http-stdio)
   - [Bridging LLM Tool Calls to MCP](#bridging-llm-tool-calls-to-mcp)
-  - [Brave Search Integration](#brave-search-integration)
-- [Testing & Scripts](#testing--scripts)
 - [Troubleshooting & Tips](#troubleshooting--tips)
 
 ---
@@ -39,35 +36,28 @@ yarn add @ideadesignmedia/open-ai.js
 pnpm add @ideadesignmedia/open-ai.js
 ```
 
-> `sharp` is bundled for image helpers. Ensure your runtime can load native add-ons (Windows users may need the Visual C++ build tools; Alpine users should install `libvips`).
+> `sharp` is used by the image helpers. Ensure your runtime can load native add‑ons (Windows may need the Visual C++ build tools; Alpine should install `libvips`).
 
 ---
 
-## Configuration
+## Importing
 
-Create `config.json` (or use environment variables) with the keys you need. The library auto-loads `config.json` when you import `"@ideadesignmedia/config.js"` in tests or entry files.
+This package supports both ESM and CommonJS.
 
-```json
-{
-  "OPEN_AI_ENDPOINT": "https://api.openai.com",
-  "OPEN_AI_API_KEY": "sk-...",
-  "OPEN_AI_ORGANIZATION": "",
-  "MODEL_ENDPOINT": "https://llama.yourcompany.net",
-  "API_KEY": "access-token-for-model-endpoint",
-  "BRAVE_API_KEY": "",
-  "ANTHROPIC_API_KEY": "",
-  "GOOGLE_GEMINI_API_KEY": "",
-  "COHERE_API_KEY": "",
-  "MISTRAL_API_KEY": ""
-}
+- ESM: `import OpenAIClient from '@ideadesignmedia/open-ai.js'`
+- CommonJS: `const OpenAIClient = require('@ideadesignmedia/open-ai.js')`
+
+Named exports for utilities and types (ESM):
+
+```ts
+import {
+  McpClient,
+  McpServer,
+  defineFunctionTool,
+  defineObjectSchema,
+  UnifiedLLMClient
+} from '@ideadesignmedia/open-ai.js'
 ```
-
-- `OPEN_AI_*` drive the default `OpenAIClient`.
-- `MODEL_ENDPOINT` / `API_KEY` are picked up by helpers or tests when you target an alternative deployment.
-- Unified providers (`UnifiedLLMClient`) look for their respective keys.
-- `BRAVE_API_KEY` lets the MCP test suite spawn the official Brave search server locally.
-
-You can also construct clients manually and supply keys/options in code; the config file is just a convenient default.
 
 ---
 
@@ -77,7 +67,7 @@ You can also construct clients manually and supply keys/options in code; the con
 import OpenAIClient, { Message } from '@ideadesignmedia/open-ai.js'
 
 const openai = new OpenAIClient({
-  apiKey: process.env.OPEN_AI_API_KEY,
+  apiKey: process.env.OPEN_AI_API_KEY!,
   organization: process.env.OPEN_AI_ORGANIZATION
 })
 ```
@@ -137,37 +127,6 @@ stream.onData = (delta) => process.stdout.write(delta ?? '')
 stream.onError = (err) => console.error('[stream-error]', err)
 stream.onComplete = (chunks) => {
   console.log('\nfinished', chunks.join(''))
-}
-```
-
-Responses API example (structured output + streaming):
-
-```ts
-const responseStream = await openai.createResponseStream({
-  model: 'gpt-4.1-mini',
-  input: [
-    { role: 'system', content: 'Return JSON with `summary` and `tags`.' },
-    { role: 'user', content: 'Summarise MCP transports.' }
-  ],
-  response_format: {
-    type: 'json_schema',
-    json_schema: {
-      name: 'brief',
-      schema: {
-        type: 'object',
-        required: ['summary', 'tags'],
-        properties: {
-          summary: { type: 'string' },
-          tags: { type: 'array', items: { type: 'string' } }
-        }
-      }
-    }
-  }
-})
-
-responseStream.onComplete = chunks => {
-  const payload = JSON.parse(chunks.join(''))
-  console.log(payload.summary, payload.tags)
 }
 ```
 
@@ -265,7 +224,7 @@ The same `scheduleTool` can be passed to chat completions, the Responses API, or
 
 ## Working with Alternative Endpoints
 
-Point `OpenAIClient` at any OpenAI-compatible deployment by supplying `baseURL` and `apiKey` options.
+Point `OpenAIClient` at any OpenAI‑compatible deployment by supplying `baseURL` and `apiKey` options.
 
 ```ts
 const alt = new OpenAIClient({
@@ -279,13 +238,13 @@ const resp = await alt.completion('Hello alt endpoint', 1, undefined, {
 })
 ```
 
-All helpers (including streaming, images, files, vector stores) reuse the same HTTP client, so overriding once affects every call. Tests such as `tests/openai.integration.test.ts` will also respect `MODEL_ENDPOINT`/`API_KEY` when present.
+Note: When using non‑OpenAI deployments, set `baseURL` to that host and pass the token with `apiKey`. No additional configuration files are required.
 
 ---
 
 ## Unified LLM Client
 
-`UnifiedLLMClient` gives you one interface across OpenAI, Anthropic, Google Gemini, Cohere, and Mistral. Messages, tool definitions, and metadata share a single TypeScript shape so routing logic stays provider agnostic.
+`UnifiedLLMClient` gives you one interface across OpenAI, Anthropic, Google Gemini, Cohere, and Mistral. Messages, tool definitions, and metadata share a single TypeScript shape so routing logic stays provider‑agnostic.
 
 ```ts
 import {
@@ -357,7 +316,7 @@ await mistral.generateChat({
 })
 ```
 
-### Shared Tool Definitions and Model Discovery
+### Shared Tools and Model Discovery
 
 All providers accept the same `tools` array if the upstream API supports function calling.
 
@@ -412,21 +371,11 @@ const custom = new UnifiedLLMClient({
 })
 ```
 
-### End-to-End Provider Tests
-
-`tests/unified.llm.test.ts` exercises the `UnifiedLLMClient` against real Anthropic, Google Gemini, Cohere, and Mistral APIs. Provide the corresponding keys (set in `config.json` or environment vars) and run:
-
-```bash
-yarn node --require ts-node/register --test tests/unified.llm.test.ts
-```
-
-Each sub-test lists models, chooses an accessible candidate, runs a chat request, and logs responses. Failures due to quota/auth produce skips with contextual messages so CI stays informative without hard failing your pipeline.
-
 ---
 
 ## MCP Server and Client Toolkit
 
-The MCP helpers implement the latest protocol spec (2025-06-18). You can ship servers that expose tools/resources/prompts/models and clients that connect over WebSocket, HTTP long-polling, or STDIO.
+The MCP helpers implement the latest protocol spec (2025‑06‑18). Ship servers that expose tools/resources/prompts/models and clients that connect over WebSocket, HTTP long‑polling, or STDIO.
 
 ### Authoring Custom Tools
 
@@ -468,7 +417,7 @@ const server = new McpServer({
 } satisfies McpServerOptions)
 ```
 
-### Transport Options: WebSocket, HTTP, STDIO
+### Transports: WebSocket, HTTP, STDIO
 
 ```ts
 // WebSocket listener
@@ -503,42 +452,13 @@ const incident = await client.callTool('get_incident_status', { ticket: 'INC-42'
 
 This pattern keeps LLM glue thin, with full MCP logging and transport flexibility.
 
-### Brave Search Integration
-
-If `BRAVE_API_KEY` is set, `tests/mcp.integration.test.ts` will:
-
-1. Allocate a free local port.
-2. Spawn `@brave/brave-search-mcp-server` via `npx -y` on STDIO.
-3. Bridge STDIO <-> WebSocket so our `McpClient` sees a normal socket.
-4. Run a handshake and issue a `search` request.
-
-Run everything with:
-
-```bash
-yarn test-mcp
-```
-
-If Brave is unavailable the suite logs why and skips gracefully.
-
----
-
-## Testing & Scripts
-
-- `yarn build` – type-check and emit `dist/`.
-- `yarn test-openai` – exhaustive OpenAI helper integration (completions, responses, files, fine-tuning, images, moderation, etc.).
-- `yarn test-mcp` – MCP compliance harness + Brave Search integration.
-- `node --require ts-node/register --test tests/unified.llm.test.ts` – Unified client tests against Anthropic, Gemini, Cohere, Mistral (skips automatically on auth/quota issues).
-
-Each test file logs rich diagnostics (`[mcp-test]`, `[unified-google]`, etc.) so you can follow handshake and API behavior in CI.
-
 ---
 
 ## Troubleshooting & Tips
 
-- **401/403 or quota errors:** Most integration tests convert these into skips; inspect the console logs for `HTTP 401`, `quota`, or `billing` messages before re-running.
-- **Streaming stalls:** Ensure your environment allows outbound SSE/WebSocket connections; behind strict proxies provide a custom `fetch` implementation.
+- **401/403 or quota errors:** Ensure the correct API key is in your environment. Many providers require enabling specific models/features on your account.
+- **Streaming stalls:** Ensure your environment allows outbound SSE/WebSocket connections; behind strict proxies provide a custom `fetch`.
 - **Native builds failing (`sharp`):** Install the prerequisite build toolchain or use prebuilt Docker images.
-- **Alt providers missing streaming:** Only the OpenAI provider currently implements `streamChat`; others throw a descriptive error until their APIs expose compatible transports.
-- **Brave integration stuck:** Double-check `BRAVE_API_KEY` and ensure `npx` can download `@brave/brave-search-mcp-server`.
+- **Provider streaming:** Only the OpenAI provider currently implements `streamChat`; others throw a descriptive error until their APIs expose compatible transports.
 
-Happy building! The project directory includes additional PDFs under `docs/` that detail MCP compliance and cross-provider LLM guidance if you need deeper architectural references.
+Happy building!
