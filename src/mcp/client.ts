@@ -268,7 +268,38 @@ class McpClient {
 
   public async listTools(): Promise<ChatCompletionsFunctionTool[]> {
     const result = await this.request("tools/list")
-    return (Array.isArray(result) ? result : []) as ChatCompletionsFunctionTool[]
+    const normalize = (tools: unknown[]): ChatCompletionsFunctionTool[] =>
+      tools
+        .map(tool => {
+          if (!tool || typeof tool !== "object") return undefined
+          const record = tool as Record<string, unknown>
+          if (record.type === "function" && typeof record.function === "object") {
+            return record as unknown as ChatCompletionsFunctionTool
+          }
+          const name = typeof record.name === "string" ? record.name : undefined
+          const description = typeof record.description === "string" ? record.description : undefined
+          const params = record.inputSchema ?? record.parameters
+          if (name && params && typeof params === "object") {
+            return {
+              type: "function",
+              function: {
+                name,
+                description,
+                parameters: params as ChatToolParametersSchema
+              }
+            } satisfies ChatCompletionsFunctionTool
+          }
+          return undefined
+        })
+        .filter((value): value is ChatCompletionsFunctionTool => value !== undefined)
+
+    if (Array.isArray(result)) return normalize(result)
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>
+      if (Array.isArray(record.tools)) return normalize(record.tools)
+      if (Array.isArray(record.result)) return normalize(record.result)
+    }
+    return []
   }
 
   public async callTool<TSchema extends ChatToolParametersSchema = ChatToolParametersSchema>(
@@ -421,6 +452,8 @@ class McpClient {
     }
     if (params !== undefined) {
       body.params = params
+    } else {
+      body.params = {}
     }
 
     const response = await this.fetchFn(this.httpUrl, {

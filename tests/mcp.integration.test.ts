@@ -909,7 +909,7 @@ test("mcp: external http server (if provided)", { timeout: 30_000 }, async t => 
 
   try {
     const tools = await client.listTools()
-    console.log("[mcp-external-http] tools", Array.isArray(tools) ? tools.map(t => t.function?.name) : tools)
+    console.log("[mcp-external-http] tools", tools)
     if (!Array.isArray(tools) || tools.length === 0) {
       t.skip("External HTTP: no tools listed")
       return
