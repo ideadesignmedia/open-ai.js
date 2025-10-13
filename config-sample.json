@@ -1,12 +1,15 @@
 ﻿{
-  "OPEN_AI_ENDPOINT": "https://api.openai.com",
-  "OPEN_AI_API_KEY": "",
-  "OPEN_AI_ORGANIZATION": "",
-  "MODEL_ENDPOINT": "",
-  "API_KEY": "",
-  "BRAVE_API_KEY": "",
-  "ANTHROPIC_API_KEY": "",
-  "GOOGLE_GEMINI_API_KEY": "",
-  "COHERE_API_KEY": "",
-  "MISTRAL_API_KEY": ""
+    "OPEN_AI_ENDPOINT":  "https://api.openai.com",
+    "OPEN_AI_API_KEY":  "",
+    "OPEN_AI_ORGANIZATION":  "",
+    "MODEL_ENDPOINT":  "",
+    "API_KEY":  "",
+    "BRAVE_API_KEY":  "",
+    "ANTHROPIC_API_KEY":  "",
+    "GOOGLE_GEMINI_API_KEY":  "",
+    "COHERE_API_KEY":  "",
+    "MISTRAL_API_KEY":  "",
+    "MCP_HTTP_URL":  "",
+    "MCP_HTTP_HEADERS":  ""
 }
+

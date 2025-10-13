@@ -64,6 +64,7 @@ class McpClient {
   private readonly headers?: Record<string, string>
   private readonly fetchFn: typeof fetch
   private readonly stdioOptions?: McpClientOptions["stdio"]
+  private sessionId?: string
   private httpUrl?: string
   private ws?: WebSocket
   private stdioProcess?: ChildProcessWithoutNullStreams
@@ -84,6 +85,7 @@ class McpClient {
       throw new Error("fetch is not available in this environment")
     }))
     this.stdioOptions = options.stdio
+    this.sessionId = undefined
 
     if ((transport === "websocket" || transport === "http") && !options.url) {
       throw new Error("url is required for websocket and http transports")
@@ -224,9 +226,25 @@ class McpClient {
   public async initialize(hostInfo?: JsonRecord): Promise<JsonValue> {
     const params: JsonRecord = {
       protocolVersion: this.protocolVersion,
+      ...(this.sessionId
+        ? {
+            sessionId: this.sessionId,
+            session_id: this.sessionId,
+            session: { id: this.sessionId }
+          }
+        : {}),
       ...hostInfo
     }
     const result = await this.request("initialize", params)
+    // Try to capture session id from the initialize payload as a fallback
+    if (!this.sessionId && result && typeof result === "object") {
+      const r = result as Record<string, unknown>
+      const candidate =
+        (typeof r["sessionId"] === "string" && (r["sessionId"] as string)) ||
+        (typeof r["session_id"] === "string" && (r["session_id"] as string)) ||
+        (r["session"] && typeof (r["session"] as any).id === "string" && (r["session"] as any).id)
+      if (candidate) this.sessionId = candidate
+    }
     const negotiated = (result as JsonRecord | undefined)?.protocolVersion
     this.negotiatedProtocolVersion = typeof negotiated === "string" ? negotiated : this.protocolVersion
     return result
@@ -371,13 +389,24 @@ class McpClient {
     })
   }
 
-  private async httpRequest(method: string, params: JsonRecord | JsonValue | undefined, expectResponse: boolean): Promise<JsonValue> {
+  private async httpRequest(
+    method: string,
+    params: JsonRecord | JsonValue | undefined,
+    expectResponse: boolean,
+    attempt = 0
+  ): Promise<JsonValue> {
     if (!this.httpUrl) {
       throw new Error("HTTP URL is not configured")
     }
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
+      // Some MCP HTTP servers require clients to accept both JSON and SSE
+      // for negotiation; advertise both by default.
+      "Accept": "application/json, text/event-stream",
       ...(this.headers ?? {})
+    }
+    if (this.sessionId) {
+      headers["Mcp-Session-Id"] = this.sessionId
     }
     const protocolHeader = this.negotiatedProtocolVersion ?? this.protocolVersion
     headers["MCP-Protocol-Version"] = protocolHeader
@@ -400,18 +429,93 @@ class McpClient {
       body: JSON.stringify(body)
     })
 
+    const respSession =
+      response.headers.get("Mcp-Session-Id") ||
+      response.headers.get("MCP-SESSION-ID") ||
+      response.headers.get("MCP-Session-ID") ||
+      response.headers.get("mcp-session-id") ||
+      response.headers.get("MCP-Session-Id")
+    if (respSession && respSession.trim().length > 0) {
+      this.sessionId = respSession.trim()
+    }
+
     if (!expectResponse) {
       if (!response.ok && response.status !== 204) {
+        if (this.sessionId && attempt === 0) {
+          return this.httpRequest(method, params, expectResponse, attempt + 1)
+        }
         throw new Error(`HTTP request failed with status ${response.status}`)
       }
       return null
     }
 
-    const parsed = (await response.json()) as JsonRpcResponse
-    if (parsed.error) {
-      throw new JsonRpcError(parsed.error.code, parsed.error.message, parsed.error.data)
+    if (!response.ok) {
+      if (this.sessionId && attempt === 0) {
+        return this.httpRequest(method, params, expectResponse, attempt + 1)
+      }
+      const bodyText = await response.text().catch(() => "")
+      throw new Error(`HTTP request failed with status ${response.status}: ${bodyText}`)
     }
-    return parsed.result!
+
+    const contentType = response.headers.get("content-type") ?? ""
+
+    if (contentType.includes("application/json")) {
+      const parsed = (await response.json()) as JsonRpcResponse
+      if (parsed.error) {
+        throw new JsonRpcError(parsed.error.code, parsed.error.message, parsed.error.data)
+      }
+      return parsed.result!
+    }
+    // Some MCP HTTP servers send JSON-RPC replies over SSE (text/event-stream)
+    if (contentType.includes("text/event-stream")) {
+      const text = await response.text()
+      const events: Array<Record<string, unknown>> = []
+      let dataBuffer = ""
+      const lines = text.split(/\r?\n/)
+      let hasAnyEvent = false
+      for (const line of lines) {
+        if (line.startsWith("data:")) {
+          dataBuffer += (dataBuffer ? "\n" : "") + line.slice(5).trimStart()
+        } else if (line.trim() === "") {
+          if (dataBuffer) {
+            try {
+              const obj = JSON.parse(dataBuffer) as Record<string, unknown>
+              events.push(obj)
+            } catch {
+              // ignore parse error and continue accumulating next event
+            }
+            dataBuffer = ""
+            hasAnyEvent = true
+          }
+        }
+      }
+      if (!hasAnyEvent && dataBuffer) {
+        // single data event without trailing blank line
+        try { events.push(JSON.parse(dataBuffer) as Record<string, unknown>) } catch {}
+      }
+      for (const evt of events) {
+        // Expect JSON-RPC envelope in data
+        const error = (evt as any).error as { code?: number; message?: string; data?: JsonValue } | undefined
+        if (error && typeof error.message === "string" && typeof error.code === "number") {
+          throw new JsonRpcError(error.code, error.message, error.data)
+        }
+        if ((evt as any).result !== undefined) {
+          return (evt as any).result as JsonValue
+        }
+      }
+      throw new Error("SSE response did not contain a JSON-RPC result")
+    }
+    // Fallback: attempt to parse as JSON; if it fails, throw a helpful error
+    try {
+      const parsed = (await response.json()) as JsonRpcResponse
+      if (parsed.error) {
+        throw new JsonRpcError(parsed.error.code, parsed.error.message, parsed.error.data)
+      }
+      return parsed.result!
+    } catch (e) {
+      const bodyText = await response.text().catch(() => "")
+      throw new Error(`Unexpected HTTP response; content-type=${contentType || 'unknown'} body=${bodyText.slice(0, 200)}`)
+    }
   }
 
   private processResponsePayload(payload: string): void {
