@@ -104,6 +104,9 @@ Never commit real secrets. `config.json` is for local dev only.
 - Server options allow exposing tools/resources/prompts/models and selecting transports (`websocket`, `http`, `stdio`).
 - The Brave Search MCP subtests run only when `BRAVE_API_KEY` is provided. The harness auto‑bridges STDIO to a local WebSocket.
 - Client and server negotiate `protocolVersion: '2025-06-18'` and send the `initialized` notification as per spec.
+- The server normalizes tool invocation arguments before calling handlers:
+  - Text segments in `content` are flattened; handlers see plain JSON for `arguments`.
+  - Handlers should return a result and include a `content` array with at least one `{ type: 'text', text }` item to keep bridges/UI happy.
 
 ## Troubleshooting
 - 401/403/quota/404 errors: Tests convert many of these into skips with context; verify keys, project access to models, and any provider‑side feature flags.

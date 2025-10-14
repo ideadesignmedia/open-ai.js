@@ -92,7 +92,9 @@ const DEFAULT_TOOL_HANDLERS = [
   {
     tool: sumNumbersTool,
     async handler({ values }) {
-      const numbers = collectNumericValues(values)
+      const numbers = Array.isArray(values)
+        ? (values as number[]).filter(value => typeof value === "number" && Number.isFinite(value))
+        : []
       const sum = numbers.reduce((total, value) => total + value, 0)
       const expression = numbers.length > 0 ? `${numbers.join(" + ")} = ${sum}` : `Sum: ${sum}`
       return createTextContentPayload(expression, { sum, terms: numbers })
@@ -185,78 +187,6 @@ const createTextContentPayload = (text: string, extras: JsonRecord = {}): JsonRe
     { type: "text", text }
   ]
 })
-
-const parseMaybeNumber = (value: unknown): number | undefined => {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim()
-    if (trimmed.length === 0) return undefined
-    const parsed = Number(trimmed)
-    if (!Number.isNaN(parsed)) {
-      return parsed
-    }
-  }
-  return undefined
-}
-
-const collectNumericValues = (input: unknown): number[] => {
-  const numbers: number[] = []
-  const visited = new Set<unknown>()
-
-  const visit = (value: unknown): void => {
-    if (value === undefined || value === null) return
-
-    const parsed = parseMaybeNumber(value)
-    if (parsed !== undefined) {
-      numbers.push(parsed)
-      return
-    }
-
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        visit(entry)
-      }
-      return
-    }
-
-    if (typeof value === "object") {
-      if (visited.has(value)) return
-      visited.add(value)
-      const record = value as Record<string, unknown>
-      const directKeys: Array<keyof typeof record> = [
-        "value",
-        "number",
-        "text",
-        "content",
-        "literal",
-        "raw",
-        "string"
-      ]
-      for (const key of directKeys) {
-        if (key in record) {
-          visit(record[key])
-        }
-      }
-      const collectionKeys: Array<keyof typeof record> = [
-        "values",
-        "items",
-        "elements",
-        "arguments",
-        "list"
-      ]
-      for (const key of collectionKeys) {
-        if (key in record) {
-          visit(record[key])
-        }
-      }
-    }
-  }
-
-  visit(input)
-  return numbers
-}
 
 const resolveResourceKey = (idOrUri: string): string => {
   const normalized = idOrUri.trim()

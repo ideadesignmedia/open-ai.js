@@ -20,7 +20,7 @@ TypeScript-first helpers for OpenAI‑compatible APIs, a unified multi‑provide
   - [Authoring Custom Tools](#authoring-custom-tools)
   - [Transports: WebSocket, HTTP, STDIO](#transports-websocket-http-stdio)
   - [Bridging LLM Tool Calls to MCP](#bridging-llm-tool-calls-to-mcp)
-- [Testing](#testing)
+- [Exports & Capabilities](#exports--capabilities)
 - [Troubleshooting & Tips](#troubleshooting--tips)
 
 ---
@@ -58,6 +58,12 @@ import {
   defineObjectSchema,
   UnifiedLLMClient
 } from '@ideadesignmedia/open-ai.js'
+```
+
+CommonJS consumers can also import individual helpers:
+
+```js
+const { McpClient, McpServer, defineFunctionTool } = require('@ideadesignmedia/open-ai.js')
 ```
 
 ---
@@ -454,16 +460,27 @@ const incident = await client.callTool('get_incident_status', { ticket: 'INC-42'
 This pattern keeps LLM glue thin, with full MCP logging and transport flexibility.
 
 ---
-## Testing
+## Exports & Capabilities
 
-Use the timeout harness whenever you run the MCP suites so lingering sockets and transports cannot block the process:
+- Default export `OpenAIClient` – typed helpers for OpenAI-compatible endpoints:
+  - Chat: `chatCompletion`, `chatCompletionStream`, `Message`
+  - Responses API: `createResponse`, `createResponseStream`, `getResponse`, `cancelResponse`
+  - Audio: `generateSpeech`, `getTranscription`, `getTranslation`
+  - Images: `generateImage`, `editImage`, `getImageVariations`
+  - Files: `uploadFile`, `getFiles`, `getFile`, `getFileContent`, `deleteFile`
+  - Fine-tuning: `createFineTuningJob`, `listFineTuningJobs`, `retrieveFineTuningJob`, `cancelFineTuningJob`, `listFineTuningJobEvents`, `listFineTuningJobCheckpoints`
+  - Embeddings: `getEmbedding`
+  - Moderation: `moderation`
+  - Models: `getModels`, `getModel`
+  - Vector Stores: `createVectorStore`, `addFileToVectorStore`, `searchVectorStore`, `getVectorStore`, `deleteVectorStore`
 
-```bash
-node scripts/run-test-with-timeout.js --timeout=90000 node --test-timeout=20000 --require ts-node/register --test tests/mcp.integration.test.ts tests/mcp.mock-client.test.ts tests/mcp.mock-server.test.ts
-```
+- Named MCP exports:
+  - `McpServer`, `McpClient`, `JsonRpcError`
+  - Tool helpers: `defineFunctionTool`, `defineObjectSchema`
+  - Convenience: `createMockMcpServer`, `startMockMcpServer` (for local demos)
 
-This wrapper enforces the MCP 2025-06-18 negotiation expectations—capturing tools/resources/prompts capability flags, verifying server instructions, and forcing shutdown—before terminating any stubborn connections.
-
+- Unified client:
+  - `UnifiedLLMClient` – one interface for OpenAI, Anthropic, Gemini, Cohere, and Mistral, including shared tools, streaming (where supported), and model listing.
 
 ## Troubleshooting & Tips
 

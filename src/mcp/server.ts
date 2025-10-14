@@ -95,6 +95,50 @@ interface SessionState {
   selectedModel?: string
 }
 
+const isTextSegment = (value: JsonValue): value is { type: "text"; text: string } =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as { type?: unknown }).type === "text" &&
+      typeof (value as { text?: unknown }).text === "string"
+  )
+
+const normalizeInvocationValue = (value: JsonValue): JsonValue => {
+  if (Array.isArray(value)) {
+    return value.map(normalizeInvocationValue) as JsonValue
+  }
+  if (value && typeof value === "object") {
+    if (isTextSegment(value)) {
+      return (value as { text: string }).text
+    }
+    const record = value as Record<string, JsonValue>
+    const entries = Object.entries(record)
+    if (Array.isArray(record.content)) {
+      const normalizedContent = record.content.map(normalizeInvocationValue)
+      const restEntries = entries.filter(([key]) => key !== "content")
+      const allText = Array.isArray(normalizedContent) && normalizedContent.every(segment => typeof segment === "string")
+      if (restEntries.length === 0 && allText) {
+        return (normalizedContent as string[]).join('')
+      }
+      const normalizedRecord: Record<string, JsonValue> = {}
+      for (const [key, entry] of restEntries) {
+        normalizedRecord[key] = normalizeInvocationValue(entry)
+      }
+      normalizedRecord.content = normalizedContent as JsonValue
+      if (allText && normalizedRecord.text === undefined) {
+        normalizedRecord.text = (normalizedContent as string[]).join('')
+      }
+      return normalizedRecord
+    }
+    const normalized: Record<string, JsonValue> = {}
+    for (const [key, entry] of entries) {
+      normalized[key] = normalizeInvocationValue(entry)
+    }
+    return normalized
+  }
+  return value
+}
+
 class McpServer<
   THandlers extends ReadonlyArray<McpToolHandlerOptions<any>> = ReadonlyArray<McpToolHandlerOptions<any>>
 > {
@@ -455,8 +499,10 @@ class McpServer<
       const registered = this.tools.get(name)!
       try {
         const parsed = typeof args === "string" ? JSON.parse(args) : args
+        const normalizedArgs =
+          parsed && typeof parsed === "object" ? normalizeInvocationValue(parsed as JsonValue) : parsed
         const result = await registered.handler(
-          parsed as InferToolArguments<ChatCompletionsFunctionTool<ChatToolParametersSchema>>
+          (normalizedArgs ?? undefined) as InferToolArguments<ChatCompletionsFunctionTool<ChatToolParametersSchema>>
         )
         return success(result)
       } catch (err) {
