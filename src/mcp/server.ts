@@ -466,11 +466,11 @@ class McpServer<
     }
 
     if (method === "ping") {
-      return success("pong")
+      return success({})
     }
 
     if (method === "shutdown") {
-      const response = success("ok")
+      const response = success({ ok: true })
       setImmediate(() => {
         void this.stop()
       })

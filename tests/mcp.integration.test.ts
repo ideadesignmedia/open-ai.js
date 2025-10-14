@@ -207,9 +207,9 @@ test("mcp: local server", { timeout: 30_000 }, async t => {
 
 
   await t.test("ping & shutdown", async () => {
-    const pong = await client.ping()
-    console.log("[mcp-test] ping response", pong)
-    assert.equal(pong, "pong")
+  const pong = await client.ping()
+  console.log("[mcp-test] ping response", pong)
+  assert.deepEqual(pong, {})
     await client.shutdown()
     console.log("[mcp-test] shutdown complete")
   })
