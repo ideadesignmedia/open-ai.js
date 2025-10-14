@@ -1,0 +1,18 @@
+{
+	"servers": {
+		"mcp-stdio": {
+			"type": "stdio",
+			"command": "node",
+			"args": [
+				"${workspaceFolder}/dist/scripts/mock-mcp-server.js",
+				"--transports",
+				"stdio"
+			],
+			"env": {}
+		},
+		"debug": {
+			"type": "stdio"
+		}
+	},
+	"inputs": []
+}

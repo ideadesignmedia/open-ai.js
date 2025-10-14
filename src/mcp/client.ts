@@ -223,47 +223,116 @@ class McpClient {
     }
   }
 
-  public async initialize(hostInfo?: JsonRecord): Promise<JsonValue> {
-    const params: JsonRecord = {
-      protocolVersion: this.protocolVersion,
-      ...(this.sessionId
-        ? {
-            sessionId: this.sessionId,
-            session_id: this.sessionId,
-            session: { id: this.sessionId }
-          }
-        : {}),
-      ...hostInfo
+  public async initialize(params: JsonRecord = {}): Promise<JsonValue> {
+    const requestParams: JsonRecord = { ...params }
+
+    const requestedMcpVersion = requestParams["mcpVersion"]
+    const requestedProtocolVersion = requestParams["protocolVersion"]
+    if (
+      typeof requestedMcpVersion === "string" &&
+      (requestedProtocolVersion === undefined || typeof requestedProtocolVersion !== "string")
+    ) {
+      requestParams["protocolVersion"] = requestedMcpVersion
     }
-    const result = await this.request("initialize", params)
-    // Try to capture session id from the initialize payload as a fallback
-    if (!this.sessionId && result && typeof result === "object") {
-      const r = result as Record<string, unknown>
+
+    if (
+      typeof requestParams["protocolVersion"] !== "string" ||
+      (requestParams["protocolVersion"] as string).trim().length === 0
+    ) {
+      requestParams["protocolVersion"] = this.protocolVersion
+    }
+
+    const sessionField = requestParams["session"]
+    let sessionValue: string | undefined
+    if (sessionField && typeof sessionField === "object" && sessionField !== null) {
+      const sessionRecord = sessionField as { id?: unknown }
+      if (typeof sessionRecord.id === "string") {
+        sessionValue = sessionRecord.id
+      }
+    }
+    if (!sessionValue && typeof requestParams["sessionId"] === "string") {
+      sessionValue = requestParams["sessionId"] as string
+    }
+    if (!sessionValue && typeof requestParams["session_id"] === "string") {
+      sessionValue = requestParams["session_id"] as string
+    }
+    if (sessionValue) {
+      this.sessionId = sessionValue
+    }
+
+    if (this.sessionId && !requestParams["sessionId"] && !requestParams["session_id"] && !requestParams["session"]) {
+      requestParams["sessionId"] = this.sessionId
+      requestParams["session_id"] = this.sessionId
+      requestParams["session"] = { id: this.sessionId }
+    }
+
+    const capabilities = requestParams["capabilities"]
+    if (capabilities === undefined || capabilities === null || typeof capabilities !== "object") {
+      requestParams["capabilities"] = {}
+    }
+
+    const clientInfo = requestParams["clientInfo"]
+    if (clientInfo === undefined || clientInfo === null || typeof clientInfo !== "object") {
+      const defaultClient: JsonRecord = { name: "open-ai.js" }
+      let inferredVersion: string | undefined
+      if (typeof process !== "undefined" && process.env) {
+        inferredVersion = process.env.OPENAI_JS_VERSION ?? process.env.npm_package_version
+      }
+      if (inferredVersion && inferredVersion.trim().length > 0) {
+        defaultClient.version = inferredVersion
+      }
+      requestParams["clientInfo"] = defaultClient
+    }
+
+    if ("mcpVersion" in requestParams) {
+      delete (requestParams as Record<string, unknown>)["mcpVersion"]
+    }
+
+    const result = await this.request("initialize", requestParams)
+
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>
       const candidate =
-        (typeof r["sessionId"] === "string" && (r["sessionId"] as string)) ||
-        (typeof r["session_id"] === "string" && (r["session_id"] as string)) ||
-        (r["session"] && typeof (r["session"] as any).id === "string" && (r["session"] as any).id)
-      if (candidate) this.sessionId = candidate
+        (typeof record["session"] === "object" &&
+          record["session"] !== null &&
+          typeof (record["session"] as { id?: unknown }).id === "string" &&
+          ((record["session"] as { id: string }).id as string)) ||
+        (typeof record["sessionId"] === "string" && (record["sessionId"] as string)) ||
+        (typeof record["session_id"] === "string" && (record["session_id"] as string))
+      if (candidate) {
+        this.sessionId = candidate
+      }
     }
-    const negotiated = (result as JsonRecord | undefined)?.protocolVersion
-    this.negotiatedProtocolVersion = typeof negotiated === "string" ? negotiated : this.protocolVersion
+
+    const negotiated =
+      result && typeof result === "object" ? ((result as JsonRecord)["protocolVersion"] as string | undefined) : undefined
+    const requested = requestParams["protocolVersion"]
+    this.negotiatedProtocolVersion =
+      typeof negotiated === "string" && negotiated.trim().length > 0
+        ? negotiated
+        : (typeof requested === "string" ? requested : this.protocolVersion)
+
     return result
   }
 
-  public async sendInitialized(capabilities?: JsonRecord): Promise<void> {
-    await this.notify("initialized", capabilities ? { capabilities } : undefined)
+  public async sendInitialized(params?: JsonRecord): Promise<void> {
+    const payload = params && Object.keys(params).length > 0 ? params : undefined
+    await this.notify("notifications/initialized", payload)
   }
 
   public async ping(): Promise<JsonValue> {
     return this.request("ping")
   }
 
-  public async shutdown(): Promise<JsonValue> {
-    try {
-      return await this.request("shutdown")
-    } finally {
-      await this.disconnect()
+  public async shutdown(): Promise<void> {
+    if (!this.isModernSpec()) {
+      try {
+        await this.request("shutdown")
+      } catch {
+        // Legacy servers may not support shutdown; ignore errors per spec guidance
+      }
     }
+    await this.disconnect()
   }
 
   public async listTools(): Promise<ChatCompletionsFunctionTool[]> {
@@ -315,7 +384,14 @@ class McpClient {
 
   public async listResources(): Promise<JsonValue[]> {
     const result = await this.request("resources/list")
-    return (Array.isArray(result) ? result : []) as JsonValue[]
+    if (Array.isArray(result)) return result as JsonValue[]
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>
+      if (Array.isArray(record.resources)) return record.resources as JsonValue[]
+      if (Array.isArray(record.result)) return record.result as JsonValue[]
+      if (Array.isArray(record.items)) return record.items as JsonValue[]
+    }
+    return []
   }
 
   public async readResource(idOrUri: string): Promise<JsonValue> {
@@ -324,7 +400,14 @@ class McpClient {
 
   public async listPrompts(): Promise<JsonValue[]> {
     const result = await this.request("prompts/list")
-    return (Array.isArray(result) ? result : []) as JsonValue[]
+    if (Array.isArray(result)) return result as JsonValue[]
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>
+      if (Array.isArray(record.prompts)) return record.prompts as JsonValue[]
+      if (Array.isArray(record.result)) return record.result as JsonValue[]
+      if (Array.isArray(record.items)) return record.items as JsonValue[]
+    }
+    return []
   }
 
   public async getPrompt(name: string, args?: JsonRecord): Promise<JsonValue> {
@@ -333,7 +416,14 @@ class McpClient {
 
   public async listModels(): Promise<JsonValue[]> {
     const result = await this.request("models/list")
-    return (Array.isArray(result) ? result : []) as JsonValue[]
+    if (Array.isArray(result)) return result as JsonValue[]
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>
+      if (Array.isArray(record.models)) return record.models as JsonValue[]
+      if (Array.isArray(record.result)) return record.result as JsonValue[]
+      if (Array.isArray(record.items)) return record.items as JsonValue[]
+    }
+    return []
   }
 
   public async getModel(name: string): Promise<JsonValue> {
@@ -452,8 +542,6 @@ class McpClient {
     }
     if (params !== undefined) {
       body.params = params
-    } else {
-      body.params = {}
     }
 
     const response = await this.fetchFn(this.httpUrl, {
@@ -549,6 +637,11 @@ class McpClient {
       const bodyText = await response.text().catch(() => "")
       throw new Error(`Unexpected HTTP response; content-type=${contentType || 'unknown'} body=${bodyText.slice(0, 200)}`)
     }
+  }
+
+  private isModernSpec(): boolean {
+    const version = this.negotiatedProtocolVersion ?? this.protocolVersion
+    return typeof version === "string" && /^\d{4}-\d{2}-\d{2}$/.test(version) && version >= MCP_PROTOCOL_VERSION
   }
 
   private processResponsePayload(payload: string): void {

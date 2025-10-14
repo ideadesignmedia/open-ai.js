@@ -1,4 +1,6 @@
-﻿export { McpServer } from './server'
-export type { McpServerOptions, McpToolHandlerOptions } from './server'
-export { McpClient, JsonRpcError } from './client'
-export type { McpClientOptions } from './client'
+﻿export { McpServer } from "./server"
+export type { McpServerOptions, McpToolHandlerOptions, McpServerTransport } from "./server"
+export { McpClient, JsonRpcError } from "./client"
+export type { McpClientOptions } from "./client"
+export { createMockMcpServer, startMockMcpServer } from "./mock-server"
+export type { MockMcpServerOptions } from "./mock-server"

@@ -72,6 +72,19 @@ test("mcp: local server", { timeout: 30_000 }, async t => {
     }
   } as const)
 
+  const timeTool = defineFunctionTool({
+    type: "function",
+    function: {
+      name: "current_time",
+      description: "Return the current ISO 8601 timestamp.",
+      parameters: defineObjectSchema({
+        type: "object",
+        properties: {},
+        additionalProperties: false
+      } as const)
+    }
+  } as const)
+
   const server = new McpServer({
     httpServer,
     path: "/mcp",
@@ -81,9 +94,29 @@ test("mcp: local server", { timeout: 30_000 }, async t => {
         tool: sumTool,
         handler: async ({ values }) => {
           const nums = Array.isArray(values) ? (values as Array<number>) : []
-          const sum = nums.reduce((acc, cur) => acc + (typeof cur === "number" ? cur : 0), 0)
-          console.log("[mcp-test] sum_numbers handler", nums, "->", sum)
-          return { sum }
+          const numericValues = nums.filter(value => typeof value === "number")
+          const sum = numericValues.reduce((acc, cur) => acc + cur, 0)
+          console.log("[mcp-test] sum_numbers handler", numericValues, "->", sum)
+          const expression = numericValues.length > 0 ? `${numericValues.join(" + ")} = ${sum}` : `Sum: ${sum}`
+          return {
+            sum,
+            terms: numericValues,
+            content: [
+              { type: "text", text: expression }
+            ]
+          }
+        }
+      },
+      {
+        tool: timeTool,
+        handler: async () => {
+          const isoTimestamp = new Date().toISOString()
+          return {
+            isoTimestamp,
+            content: [
+              { type: "text", text: `Current time: ${isoTimestamp}` }
+            ]
+          }
         }
       }
     ],
@@ -91,14 +124,6 @@ test("mcp: local server", { timeout: 30_000 }, async t => {
     readResource: async (id) => `Hello Resource ${id}`,
     prompts: [{ name: "greet", description: "Say hello", arguments: [{ name: "name", required: false }] }],
     getPrompt: async (name, args) => ({ text: name === "greet" ? `Hello ${args?.name ?? "world"}` : "" }),
-    models: [{ name: "demo-model", description: "Demonstration model" }],
-    selectModel: name => {
-      console.log("[mcp-test] model selected", name)
-    },
-    metadata: {
-      contact: "support@example.com",
-      homepage: "https://example.com"
-    }
   } satisfies McpServerOptions)
 
   await server.start()
@@ -120,11 +145,20 @@ test("mcp: local server", { timeout: 30_000 }, async t => {
   await t.test("initialize handshake", async () => {
     const init = await client.initialize({ clientInfo: { name: "mcp-e2e-test", version: "1.0.0" } })
     console.log("[mcp-test] initialize response", init)
+    const capabilities = (init as any)?.capabilities as Record<string, unknown> | undefined
+    const serverInfo = ((init as any)?.serverInfo ?? (init as any)?.server) as Record<string, unknown> | undefined
     assert.equal((init as any)?.protocolVersion, "2025-06-18")
-    const capabilities = (init as any)?.capabilities as Record<string, any> | undefined
-    assert.equal(capabilities?.tools?.list, true)
-    assert.equal(capabilities?.models?.list, true)
-    assert.equal(capabilities?.metadata?.current, true)
+    assert.equal(serverInfo?.name, "open-ai.js-mcp")
+    assert.ok(capabilities && typeof capabilities.tools === "object")
+    assert.equal((capabilities.tools as Record<string, unknown>)?.list, true)
+    assert.equal((capabilities.tools as Record<string, unknown>)?.call, true)
+    assert.ok(capabilities?.resources && typeof capabilities.resources === "object")
+    assert.equal((capabilities.resources as Record<string, unknown>)?.list, true)
+    assert.equal((capabilities.resources as Record<string, unknown>)?.read, true)
+    assert.ok(capabilities?.prompts && typeof capabilities.prompts === "object")
+    assert.equal((capabilities.prompts as Record<string, unknown>)?.list, true)
+    assert.equal((capabilities.prompts as Record<string, unknown>)?.get, true)
+    assert.equal((init as any)?.instructions, "Example MCP test server")
     assert.ok(typeof init === "object" && init !== null)
     await client.sendInitialized()
   })
@@ -138,6 +172,9 @@ test("mcp: local server", { timeout: 30_000 }, async t => {
     const result = await client.callTool("sum_numbers", { values: [1, 2, 3] })
     console.log("[mcp-test] sum_numbers result", result)
     assert.equal((result as any)?.sum, 6)
+    const content = (result as any)?.content as unknown[] | undefined
+    assert.ok(Array.isArray(content) && content.length > 0)
+    assert.equal(((content[0] as Record<string, unknown>)?.type), "text")
   })
 
   await t.test("resources list/read", async () => {
@@ -158,24 +195,16 @@ test("mcp: local server", { timeout: 30_000 }, async t => {
     assert.equal((prompt as any)?.text, "Hello Ada")
   })
 
-  await t.test("models list/get", async () => {
-    const models = await client.listModels()
-    console.log("[mcp-test] models", models)
-    assert.ok(Array.isArray(models) && models.length >= 1)
-    const model = await client.getModel("demo-model")
-    console.log("[mcp-test] getModel", model)
-    assert.equal((model as any)?.name, "demo-model")
-    await client.selectModel("demo-model")
+  await t.test("current time tool", async () => {
+    const time = await client.callTool("current_time", {})
+    console.log("[mcp-test] current_time result", time)
+    assert.ok(typeof (time as any)?.isoTimestamp === "string")
+    const content = (time as any)?.content as unknown[] | undefined
+    assert.ok(Array.isArray(content) && content.length > 0)
+    assert.equal(((content[0] as Record<string, unknown>)?.type), "text")
   })
 
-  await t.test("metadata", async () => {
-    const metadata = await client.getMetadata()
-    console.log("[mcp-test] metadata", metadata)
-    assert.equal((metadata as any)?.contact, "support@example.com")
-    const entry = await client.getMetadataEntry("homepage")
-    console.log("[mcp-test] metadata entry", entry)
-    assert.equal((entry as any)?.value, "https://example.com")
-  })
+
 
   await t.test("ping & shutdown", async () => {
     const pong = await client.ping()
@@ -666,13 +695,7 @@ test("mcp: brave client stdio", { timeout: 30_000 }, async t => {
 
   const init = await client.initialize({ clientInfo: { name: "mcp-e2e-test", version: "1.0.0" }, capabilities: {} })
   console.log("[mcp-brave-stdio] initialize", init)
-  await client.sendInitialized({
-    tools: { list: true, call: true },
-    resources: { list: true, read: true },
-    prompts: { list: true, get: true },
-    models: { list: true, get: true, select: true },
-    metadata: { current: true, get: true }
-  })
+  await client.sendInitialized()
 
   let tools: any
   try {

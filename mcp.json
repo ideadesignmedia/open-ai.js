@@ -1,0 +1,20 @@
+{
+	"servers": {
+		"openaijsmock":{
+			"type": "stdio",
+			"command": "node",
+			"args": [
+				"${workspaceFolder}/dist/scripts/mock-mcp-server.js"
+			],
+			"env": {
+			},
+			"dev": {
+				"debug": {
+					"type": "node"
+				}
+			}
+		}
+	},
+	"inputs": [
+	]
+}

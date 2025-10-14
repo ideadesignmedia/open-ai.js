@@ -1,4 +1,3 @@
-
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http"
 import { randomUUID } from "node:crypto"
 import { WebSocketServer, WebSocket } from "ws"
@@ -341,20 +340,61 @@ class McpServer<
     const method = request.method
 
     if (method === "initialize") {
-      const clientVersion = typeof request.params?.protocolVersion === "string" ? request.params.protocolVersion : undefined
-      const negotiatedVersion = clientVersion ?? MCP_PROTOCOL_VERSION
+      const params = (request.params ?? {}) as JsonRecord
+      const requestedVersionValue = (params["protocolVersion"] ?? params["mcpVersion"]) as JsonValue
+      const requestedVersion = typeof requestedVersionValue === "string" ? requestedVersionValue : undefined
+      const negotiatedVersion =
+        requestedVersion && requestedVersion.trim() === MCP_PROTOCOL_VERSION ? requestedVersion : MCP_PROTOCOL_VERSION
+
       session.selectedModel = undefined
-      const capabilities: Record<string, JsonValue> = {
-        tools: { list: true, call: true },
-        resources: { list: true, read: !!this.options.readResource },
-        prompts: { list: true, get: !!this.options.getPrompt },
-        models: {
-          list: true,
-          get: typeof this.options.getModel === "function" || Array.isArray(this.options.models),
-          select: typeof this.options.selectModel === "function"
-        },
-        metadata: { current: true, get: true }
+
+      const capabilities: Record<string, JsonValue> = {}
+      const toolCaps: JsonRecord = { list: true, invoke: true, call: true }
+      capabilities.tools = toolCaps
+
+      const hasResources =
+        (Array.isArray(this.options.resources) && this.options.resources.length > 0) ||
+        typeof this.options.readResource === "function"
+      if (hasResources) {
+        const resourceCaps: JsonRecord = { list: true }
+        if (this.options.readResource) {
+          resourceCaps.read = true
+        }
+        capabilities.resources = resourceCaps
       }
+
+      const hasPrompts =
+        (Array.isArray(this.options.prompts) && this.options.prompts.length > 0) ||
+        typeof this.options.getPrompt === "function"
+      if (hasPrompts) {
+        const promptCaps: JsonRecord = { list: true }
+        if (this.options.getPrompt) {
+          promptCaps.get = true
+        }
+        capabilities.prompts = promptCaps
+      }
+
+      const hasModels =
+        (Array.isArray(this.options.models) && this.options.models.length > 0) ||
+        typeof this.options.getModel === "function" ||
+        typeof this.options.selectModel === "function"
+      if (hasModels) {
+        const modelCaps: JsonRecord = { list: true }
+        if (typeof this.options.getModel === "function" || Array.isArray(this.options.models)) {
+          modelCaps.get = true
+        }
+        if (typeof this.options.selectModel === "function") {
+          modelCaps.select = true
+        }
+        capabilities.models = modelCaps
+      }
+
+      const metadataCaps: JsonRecord = { current: true }
+      if (this.options.getMetadata || this.options.metadata) {
+        metadataCaps.get = true
+      }
+      capabilities.metadata = metadataCaps
+
       const result: JsonRecord = {
         protocolVersion: negotiatedVersion,
         serverInfo: this.serverInfo,
@@ -371,7 +411,7 @@ class McpServer<
       return success(result)
     }
 
-    if (method === "initialized") {
+    if (method === "notifications/initialized" || method === "initialized") {
       return undefined
     }
 
@@ -388,11 +428,25 @@ class McpServer<
     }
 
     if (method === "list_tools" || method === "tools/list") {
-      const result = Array.from(this.tools.values()).map(({ tool }) => tool)
-      return success(result)
+      const tools = Array.from(this.tools.values()).map(({ tool }) => {
+        const definition = tool;
+        const fn = definition.function;
+        const parameters = (fn.parameters ?? { type: "object", properties: {} }) as JsonRecord;
+        const entry: JsonRecord = {
+          name: fn.name,
+          type: definition.type,
+          inputSchema: parameters,
+          parameters
+        };
+        if (fn.description) {
+          entry.description = fn.description;
+        }
+        return entry;
+      });
+      return success({ tools });
     }
 
-    if (method === "call_tool" || method === "tools/call") {
+    if (method === "call_tool" || method === "tools/call" || method === "tools/invoke") {
       const name = request.params?.name as string | undefined
       const args = request.params?.arguments as string | JsonValue | undefined
       if (!name || !this.tools.has(name)) {
@@ -413,8 +467,8 @@ class McpServer<
     }
 
     if (method === "resources/list") {
-      const result = this.options.resources ?? []
-      return success(result)
+      const resources = this.options.resources ?? []
+      return success({ resources })
     }
 
     if (method === "resources/read") {
@@ -434,8 +488,8 @@ class McpServer<
     }
 
     if (method === "prompts/list") {
-      const result = this.options.prompts ?? []
-      return success(result)
+      const prompts = this.options.prompts ?? []
+      return success({ prompts })
     }
 
     if (method === "prompts/get") {
@@ -455,7 +509,8 @@ class McpServer<
     }
 
     if (method === "models/list") {
-      return success(this.options.models ?? [])
+      const models = this.options.models ?? []
+      return success({ models })
     }
 
     if (method === "models/get") {

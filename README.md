@@ -20,6 +20,7 @@ TypeScript-first helpers for OpenAI‑compatible APIs, a unified multi‑provide
   - [Authoring Custom Tools](#authoring-custom-tools)
   - [Transports: WebSocket, HTTP, STDIO](#transports-websocket-http-stdio)
   - [Bridging LLM Tool Calls to MCP](#bridging-llm-tool-calls-to-mcp)
+- [Testing](#testing)
 - [Troubleshooting & Tips](#troubleshooting--tips)
 
 ---
@@ -453,6 +454,16 @@ const incident = await client.callTool('get_incident_status', { ticket: 'INC-42'
 This pattern keeps LLM glue thin, with full MCP logging and transport flexibility.
 
 ---
+## Testing
+
+Use the timeout harness whenever you run the MCP suites so lingering sockets and transports cannot block the process:
+
+```bash
+node scripts/run-test-with-timeout.js --timeout=90000 node --test-timeout=20000 --require ts-node/register --test tests/mcp.integration.test.ts tests/mcp.mock-client.test.ts tests/mcp.mock-server.test.ts
+```
+
+This wrapper enforces the MCP 2025-06-18 negotiation expectations—capturing tools/resources/prompts capability flags, verifying server instructions, and forcing shutdown—before terminating any stubborn connections.
+
 
 ## Troubleshooting & Tips
 

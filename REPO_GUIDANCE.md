@@ -45,6 +45,7 @@ Never commit real secrets. `config.json` is for local dev only.
 - `yarn build` – type‑check and emit `dist/`
 - `yarn test-openai` – OpenAI helper integration
 - `yarn test-mcp` – MCP local + Brave Search integration
+- `node scripts/run-test-with-timeout.js --timeout=90000 node --test-timeout=20000 --require ts-node/register --test tests/mcp.integration.test.ts tests/mcp.mock-client.test.ts tests/mcp.mock-server.test.ts` � required wrapper when running the MCP suites directly; it enforces cleanup of sockets and files.
 - Unified LLM integration: run directly
   - `node --require ts-node/register --test tests/unified.llm.test.ts`
 
@@ -56,12 +57,19 @@ Never commit real secrets. `config.json` is for local dev only.
   - Set `MODEL_ENDPOINT` and `API_KEY` to target a non‑OpenAI deployment.
   - Tests log clearly when a feature is unavailable on a private deployment and continue.
 
-### MCP integration (`tests/mcp.integration.test.ts` + `tests/mcp.mock-client.test.ts`)
-- Spins up a local MCP server over HTTP+WS and verifies full client/server handshake, tools, resources, prompts, models, metadata, ping/shutdown.
+### MCP integration (`tests/mcp.integration.test.ts`)
+- Spins up a local MCP server over HTTP+WS, verifying the 2025-06-18 handshake, capability flags (tools/resources/prompts), tool invocation, and ping/shutdown.
 - Brave Search MCP:
   - If `BRAVE_API_KEY` is set, the test will find a free port, spawn `@brave/brave-search-mcp-server` via `npx` (STDIO transport), bridge STDIO↔WS locally, then perform handshake and a `search` request.
   - If unavailable or failing auth/quota, the subtests log the reason and skip.
 - Timeouts are kept short (~30s per suite) with granular logging (`[mcp-test]`, `[mcp-brave]`).
+
+### MCP mock client (`tests/mcp.mock-client.test.ts`)
+- Uses the mock client harness to assert spec compliance: 2025-06-18 handshake, capability negotiation, tool calls, resource reads, prompt fetches, notifications, and error handling.
+- Negotiates `protocolVersion: '2025-06-18'` by default; mismatches surface with actionable assertions.
+
+### MCP mock server (`tests/mcp.mock-server.test.ts`)
+- Validates `createMockMcpServer`/`startMockMcpServer` over STDIO, covering tools, resources, prompts, and graceful shutdown.
 
 ### Unified LLM client (`tests/unified.llm.test.ts`)
 - Calls real Anthropic, Google Gemini, Cohere, and Mistral APIs using their keys.

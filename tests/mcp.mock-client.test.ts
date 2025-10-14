@@ -12,13 +12,23 @@ import {
   defineObjectSchema,
   McpClient,
   McpServer,
-  type McpServerOptions
+  type McpServerOptions,
+  type JsonRecord
 } from "../index"
 
 const PROTOCOL_VERSION = "2025-06-18"
 
-const EXAMPLE_MODELS = [{ name: "demo-model", description: "Demonstration model" }]
-const EXAMPLE_METADATA = { contact: "support@example.com", homepage: "https://example.com" }
+const log = (...args: unknown[]): void => console.log('[mock-client-test]', ...args)
+
+const EXAMPLE_RESOURCES = [{ id: "hello", name: "Hello Resource" }]
+const readExampleResource = async (id: string): Promise<string> => `Hello Resource ${id}`
+const EXAMPLE_PROMPTS = [{ name: "greet", description: "Say hello", arguments: [{ name: "name", required: false }] }]
+const getExamplePrompt = async (name: string, args?: Record<string, unknown>): Promise<{ text: string }> => ({
+  text:
+    name === "greet"
+      ? `Hello ${typeof args?.name === "string" ? String(args.name) : "world"}`
+      : ""
+})
 
 const createSumTool = () =>
   defineFunctionTool({
@@ -40,6 +50,53 @@ const createSumTool = () =>
       } as const)
     }
   } as const)
+
+const buildSumResponse = (values: unknown): JsonRecord => {
+  const rawNumbers = Array.isArray(values) ? (values as unknown[]) : []
+  const numbers = rawNumbers
+    .map(entry => {
+      if (typeof entry === "number" && Number.isFinite(entry)) return entry
+      if (typeof entry === "string") {
+        const parsed = Number(entry.trim())
+        return Number.isNaN(parsed) ? undefined : parsed
+      }
+      return undefined
+    })
+    .filter((value): value is number => value !== undefined)
+  const sum = numbers.reduce((acc, value) => acc + value, 0)
+  const expression = numbers.length > 0 ? `${numbers.join(" + ")} = ${sum}` : `Sum: ${sum}`
+  return {
+    sum,
+    terms: numbers,
+    content: [
+      { type: "text", text: expression }
+    ]
+  }
+}
+
+const createTimeTool = () =>
+  defineFunctionTool({
+    type: "function",
+    function: {
+      name: "current_time",
+      description: "Return the current ISO 8601 timestamp.",
+      parameters: defineObjectSchema({
+        type: "object",
+        properties: {},
+        additionalProperties: false
+      } as const)
+    }
+  } as const)
+
+const buildTimeResponse = (): JsonRecord => {
+  const isoTimestamp = new Date().toISOString()
+  return {
+    isoTimestamp,
+    content: [
+      { type: "text", text: `Current time: ${isoTimestamp}` }
+    ]
+  }
+}
 
 const getFreePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -77,20 +134,24 @@ class MockMcpClient {
 
   public async connect(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return
+    log('connecting to server', this.url)
     this.ws = new WebSocket(this.url)
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("connect timeout")), 5_000)
       this.ws!.once("open", () => {
         clearTimeout(timer)
+        log('websocket open')
         resolve()
       })
       this.ws!.once("error", error => {
         clearTimeout(timer)
+        log('websocket error', error)
         reject(error)
       })
     })
     this.ws.on("message", data => this.handleMessage(data))
     this.ws.once("close", () => {
+      log('websocket closed')
       for (const entry of this.pending.values()) {
         entry.reject(new Error("Connection closed"))
       }
@@ -103,49 +164,66 @@ class MockMcpClient {
       protocolVersion: PROTOCOL_VERSION,
       clientInfo: { name: "mock-mcp-client", version: "0.0.1" },
       capabilities: {
-        tools: { list: true, call: true },
-        resources: { list: true, read: true },
-        prompts: { list: true, get: true },
-        models: { list: true, get: true, select: true },
-        metadata: { current: true }
+        roots: { listChanged: true },
+        sampling: {},
+        elicitation: {}
       }
     }
     const result = await this.request("initialize", params)
     return (result ?? {}) as Record<string, unknown>
   }
 
-  public sendInitialized(capabilities?: Record<string, unknown>): void {
-    this.notify("initialized", capabilities ? { capabilities } : undefined)
+  public sendInitialized(): void {
+    this.notify("notifications/initialized")
   }
 
   public async listTools(): Promise<unknown[]> {
     const result = await this.request("tools/list")
-    return Array.isArray(result) ? result : []
+    if (Array.isArray(result)) return result
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>
+      if (Array.isArray(record.tools)) return record.tools
+      if (Array.isArray(record.result)) return record.result
+    }
+    return []
   }
 
   public async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     return this.request("tools/call", { name, arguments: args })
   }
 
-  public async listModels(): Promise<unknown[]> {
-    const result = await this.request("models/list")
-    return Array.isArray(result) ? result : []
+  public async listResources(): Promise<unknown[]> {
+    const result = await this.request("resources/list")
+    if (Array.isArray(result)) return result
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>
+      if (Array.isArray(record.resources)) return record.resources
+      if (Array.isArray(record.result)) return record.result
+    }
+    return []
   }
 
-  public async getModel(name: string): Promise<unknown> {
-    return this.request("models/get", { name })
+  public async readResource(id: string): Promise<unknown> {
+    return this.request("resources/read", { id, uri: id })
   }
 
-  public async getMetadata(): Promise<unknown> {
-    return this.request("metadata/current")
+  public async listPrompts(): Promise<unknown[]> {
+    const result = await this.request("prompts/list")
+    if (Array.isArray(result)) return result
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>
+      if (Array.isArray(record.prompts)) return record.prompts
+      if (Array.isArray(record.result)) return record.result
+    }
+    return []
   }
 
-  public async getMetadataEntry(key: string): Promise<unknown> {
-    return this.request("metadata/get", { key })
+  public async getPrompt(name: string, args?: Record<string, unknown>): Promise<unknown> {
+    return this.request("prompts/get", { name, arguments: args })
   }
 
-  public async shutdown(): Promise<unknown> {
-    return this.request("shutdown")
+  public async shutdown(): Promise<void> {
+    await this.disconnect()
   }
 
   public async disconnect(): Promise<void> {
@@ -181,6 +259,7 @@ class MockMcpClient {
     if (params) {
       payload.params = params
     }
+    log('notify ->', payload)
     this.ws.send(JSON.stringify(payload))
   }
 
@@ -197,6 +276,7 @@ class MockMcpClient {
     if (params) {
       payload.params = params
     }
+    log('request ->', payload)
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
       this.ws!.send(JSON.stringify(payload))
@@ -208,8 +288,10 @@ class MockMcpClient {
     try {
       message = JSON.parse(raw.toString()) as JsonRpcSuccess
     } catch {
+      log('received non-json message', raw.toString())
       return
     }
+    log('response <-', message)
     if (message.id === undefined || message.id === null) {
       return
     }
@@ -240,17 +322,21 @@ test("mcp: spec-compliant mock client", { timeout: 30_000 }, async t => {
     tools: [
       {
         tool: createSumTool(),
-        handler: async ({ values }) => {
-          const numbers = Array.isArray(values) ? (values as number[]) : []
-          return { sum: numbers.reduce((acc, value) => acc + value, 0) }
-        }
+        handler: async ({ values }) => buildSumResponse(values)
+      },
+      {
+        tool: createTimeTool(),
+        handler: async () => buildTimeResponse()
       }
     ],
-    models: EXAMPLE_MODELS,
-    metadata: EXAMPLE_METADATA
+    resources: EXAMPLE_RESOURCES.map(resource => ({ ...resource })),
+    readResource: readExampleResource,
+    prompts: EXAMPLE_PROMPTS.map(prompt => ({ ...prompt })),
+    getPrompt: getExamplePrompt
   } satisfies McpServerOptions)
 
   await server.start()
+  log('server started')
   t.after(async () => {
     await server.stop()
     httpServer.close()
@@ -258,41 +344,69 @@ test("mcp: spec-compliant mock client", { timeout: 30_000 }, async t => {
 
   const client = new MockMcpClient(url)
   await client.connect()
+  log('client connected')
   t.after(async () => {
     await client.disconnect().catch(() => undefined)
   })
 
   const init = await client.initialize()
+  log('initialize result', init)
+  const serverInfo = init.serverInfo as Record<string, unknown> | undefined
   const capabilities = init.capabilities as Record<string, any> | undefined
   assert.equal(init.protocolVersion, PROTOCOL_VERSION)
-  assert.equal(capabilities?.tools?.list, true)
-  assert.equal(capabilities?.models?.list, true)
-  assert.equal(capabilities?.metadata?.current, true)
+  assert.ok(capabilities && typeof capabilities.tools === "object")
+  assert.equal(capabilities.tools?.list, true)
+  assert.equal(capabilities.tools?.call, true)
+  assert.ok(capabilities?.resources && typeof capabilities.resources === "object")
+  assert.equal(capabilities.resources?.list, true)
+  assert.equal(capabilities.resources?.read, true)
+  assert.ok(capabilities?.prompts && typeof capabilities.prompts === "object")
+  assert.equal(capabilities.prompts?.list, true)
+  assert.equal(capabilities.prompts?.get, true)
+  assert.equal(serverInfo?.name, "open-ai.js-mcp")
+  assert.equal(init.instructions, "Spec-compliant mock server")
 
   client.sendInitialized()
+  log('sent initialized notification')
   await sleep(10)
 
   const tools = await client.listTools()
+  log('tools', tools)
   assert.ok(Array.isArray(tools))
-  assert.ok(tools.some(tool => (tool as any)?.function?.name === "sum_numbers"))
+  assert.ok(tools.some(tool => (tool as any)?.name === "sum_numbers"))
+  assert.ok(tools.some(tool => (tool as any)?.name === "current_time" || (tool as any)?.function?.name === "current_time"))
 
-  const models = await client.listModels()
-  assert.ok(Array.isArray(models) && models.length === 1)
-  const model = await client.getModel("demo-model") as Record<string, unknown>
-  assert.equal((model as any)?.name, "demo-model")
+  const resources = await client.listResources()
+  log('resources', resources)
+  assert.ok(Array.isArray(resources))
+  const resource = await client.readResource('hello')
+  assert.equal(resource, 'Hello Resource hello')
 
-  const metadata = await client.getMetadata() as Record<string, unknown>
-  assert.equal((metadata as any)?.contact, "support@example.com")
-  const metadataEntry = await client.getMetadataEntry("homepage") as Record<string, unknown>
-  assert.equal((metadataEntry as any)?.value, "https://example.com")
+  const prompts = await client.listPrompts()
+  log('prompts', prompts)
+  assert.ok(Array.isArray(prompts) && prompts.some(prompt => (prompt as any)?.name === 'greet'))
+  const prompt = await client.getPrompt('greet', { name: 'Casey' }) as Record<string, unknown>
+  assert.equal((prompt as any)?.text, 'Hello Casey')
 
   const result = await client.callTool("sum_numbers", { values: [2, 3, 5] }) as Record<string, unknown>
+  log('tool result', result)
   assert.equal(result.sum, 10)
+  const content = result.content as unknown[] | undefined
+  assert.ok(Array.isArray(content) && content.length > 0)
+  assert.equal(((content[0] as Record<string, unknown>)?.type), "text")
 
-  const shutdown = await client.shutdown()
-  assert.ok(shutdown === "ok" || shutdown === "OK" || shutdown === undefined)
+  const time = await client.callTool("current_time", {}) as Record<string, unknown>
+  log('time result', time)
+  assert.ok(typeof (time as any)?.isoTimestamp === "string")
+  const timeContent = time.content as unknown[] | undefined
+  assert.ok(Array.isArray(timeContent) && timeContent.length > 0)
+  assert.equal(((timeContent[0] as Record<string, unknown>)?.type), "text")
+
+  await client.shutdown()
+  log('client shutdown done')
 
   await client.disconnect()
+  log('client disconnect complete')
 })
 
 test("mcp client transport: websocket", { timeout: 30_000 }, async t => {
@@ -310,14 +424,17 @@ test("mcp client transport: websocket", { timeout: 30_000 }, async t => {
     tools: [
       {
         tool: createSumTool(),
-        handler: async ({ values }) => {
-          const numbers = Array.isArray(values) ? (values as number[]) : []
-          return { sum: numbers.reduce((acc, value) => acc + value, 0) }
-        }
+        handler: async ({ values }) => buildSumResponse(values)
+      },
+      {
+        tool: createTimeTool(),
+        handler: async () => buildTimeResponse()
       }
     ],
-    models: EXAMPLE_MODELS,
-    metadata: EXAMPLE_METADATA
+    resources: EXAMPLE_RESOURCES.map(resource => ({ ...resource })),
+    readResource: readExampleResource,
+    prompts: EXAMPLE_PROMPTS.map(prompt => ({ ...prompt })),
+    getPrompt: getExamplePrompt
   } satisfies McpServerOptions)
 
   await server.start()
@@ -334,18 +451,35 @@ test("mcp client transport: websocket", { timeout: 30_000 }, async t => {
 
   const init = await client.initialize({ clientInfo: { name: "websocket-client", version: "1.0.0" } }) as Record<string, unknown>
   assert.equal(init?.protocolVersion, PROTOCOL_VERSION)
+  assert.equal((init as Record<string, any>)?.instructions, "WebSocket test server")
   await client.sendInitialized()
 
   const tools = await client.listTools()
-  assert.ok(Array.isArray(tools) && tools.length === 1)
+  assert.ok(Array.isArray(tools) && tools.length === 2)
+  assert.ok(tools.some(tool => (tool as any)?.function?.name === "sum_numbers" || (tool as any)?.name === "sum_numbers"))
+  assert.ok(tools.some(tool => (tool as any)?.function?.name === "current_time" || (tool as any)?.name === "current_time"))
 
-  const models = await client.listModels()
-  assert.ok(Array.isArray(models) && models.length === 1)
-  const metadata = await client.getMetadata() as Record<string, unknown>
-  assert.equal((metadata as any)?.contact, "support@example.com")
+  const resources = await client.listResources()
+  assert.ok(Array.isArray(resources) && resources.some(resource => (resource as any)?.id === 'hello'))
+  const resource = await client.readResource('hello')
+  assert.equal(resource, 'Hello Resource hello')
+
+  const prompts = await client.listPrompts()
+  assert.ok(Array.isArray(prompts) && prompts.some(prompt => (prompt as any)?.name === 'greet'))
+  const prompt = await client.getPrompt('greet', { name: 'Riley' }) as Record<string, unknown>
+  assert.equal((prompt as any)?.text, 'Hello Riley')
 
   const result = await client.callTool("sum_numbers", { values: [1, 2, 3] }) as Record<string, unknown>
   assert.equal(result.sum, 6)
+  const content = result.content as unknown[] | undefined
+  assert.ok(Array.isArray(content) && content.length > 0)
+  assert.equal(((content[0] as Record<string, unknown>)?.type), "text")
+
+  const time = await client.callTool("current_time", {}) as Record<string, unknown>
+  assert.ok(typeof (time as any)?.isoTimestamp === "string")
+  const timeContent = time.content as unknown[] | undefined
+  assert.ok(Array.isArray(timeContent) && timeContent.length > 0)
+  assert.equal(((timeContent[0] as Record<string, unknown>)?.type), "text")
 
   await client.shutdown()
 })
@@ -366,14 +500,17 @@ test("mcp client transport: http", { timeout: 30_000 }, async t => {
     tools: [
       {
         tool: createSumTool(),
-        handler: async ({ values }) => {
-          const numbers = Array.isArray(values) ? (values as number[]) : []
-          return { sum: numbers.reduce((acc, value) => acc + value, 0) }
-        }
+        handler: async ({ values }) => buildSumResponse(values)
+      },
+      {
+        tool: createTimeTool(),
+        handler: async () => buildTimeResponse()
       }
     ],
-    models: EXAMPLE_MODELS,
-    metadata: EXAMPLE_METADATA
+    resources: EXAMPLE_RESOURCES.map(resource => ({ ...resource })),
+    readResource: readExampleResource,
+    prompts: EXAMPLE_PROMPTS.map(prompt => ({ ...prompt })),
+    getPrompt: getExamplePrompt
   } satisfies McpServerOptions)
 
   await server.start()
@@ -387,15 +524,35 @@ test("mcp client transport: http", { timeout: 30_000 }, async t => {
 
   const init = await client.initialize({ clientInfo: { name: "http-client", version: "1.0.0" } }) as Record<string, unknown>
   assert.equal(init?.protocolVersion, PROTOCOL_VERSION)
+  assert.equal((init as Record<string, any>)?.instructions, "HTTP test server")
   await client.sendInitialized()
 
-  const models = await client.listModels()
-  assert.ok(Array.isArray(models) && models.length === 1)
-  const metadata = await client.getMetadata() as Record<string, unknown>
-  assert.equal((metadata as any)?.homepage, "https://example.com")
+  const tools = await client.listTools()
+  assert.ok(Array.isArray(tools) && tools.length === 2)
+  assert.ok(tools.some(tool => (tool as any)?.function?.name === "sum_numbers" || (tool as any)?.name === "sum_numbers"))
+  assert.ok(tools.some(tool => (tool as any)?.function?.name === "current_time" || (tool as any)?.name === "current_time"))
+
+  const resources = await client.listResources()
+  assert.ok(Array.isArray(resources) && resources.some(resource => (resource as any)?.id === 'hello'))
+  const resource = await client.readResource('hello')
+  assert.equal(resource, 'Hello Resource hello')
+
+  const prompts = await client.listPrompts()
+  assert.ok(Array.isArray(prompts) && prompts.some(prompt => (prompt as any)?.name === 'greet'))
+  const prompt = await client.getPrompt('greet', { name: 'Jordan' }) as Record<string, unknown>
+  assert.equal((prompt as any)?.text, 'Hello Jordan')
 
   const result = await client.callTool("sum_numbers", { values: [4, 5, 6] }) as Record<string, unknown>
   assert.equal(result.sum, 15)
+  const content = result.content as unknown[] | undefined
+  assert.ok(Array.isArray(content) && content.length > 0)
+  assert.equal(((content[0] as Record<string, unknown>)?.type), "text")
+
+  const time = await client.callTool("current_time", {}) as Record<string, unknown>
+  assert.ok(typeof (time as any)?.isoTimestamp === "string")
+  const timeContent = time.content as unknown[] | undefined
+  assert.ok(Array.isArray(timeContent) && timeContent.length > 0)
+  assert.equal(((timeContent[0] as Record<string, unknown>)?.type), "text")
 
   await client.shutdown()
 })
@@ -414,14 +571,17 @@ test("mcp client transport: stdio", { timeout: 30_000 }, async t => {
     tools: [
       {
         tool: createSumTool(),
-        handler: async ({ values }) => {
-          const numbers = Array.isArray(values) ? (values as number[]) : []
-          return { sum: numbers.reduce((acc, value) => acc + value, 0) }
-        }
+        handler: async ({ values }) => buildSumResponse(values)
+      },
+      {
+        tool: createTimeTool(),
+        handler: async () => buildTimeResponse()
       }
     ],
-    models: EXAMPLE_MODELS,
-    metadata: EXAMPLE_METADATA
+    resources: EXAMPLE_RESOURCES.map(resource => ({ ...resource })),
+    readResource: readExampleResource,
+    prompts: EXAMPLE_PROMPTS.map(prompt => ({ ...prompt })),
+    getPrompt: getExamplePrompt
   } satisfies McpServerOptions)
 
   await server.start()
@@ -444,15 +604,35 @@ test("mcp client transport: stdio", { timeout: 30_000 }, async t => {
 
   const init = await client.initialize({ clientInfo: { name: "stdio-client", version: "1.0.0" } }) as Record<string, unknown>
   assert.equal(init?.protocolVersion, PROTOCOL_VERSION)
+  assert.equal((init as Record<string, any>)?.instructions, "STDIO test server")
   await client.sendInitialized()
 
-  const models = await client.listModels()
-  assert.ok(Array.isArray(models) && models.length === 1)
-  const metadata = await client.getMetadata() as Record<string, unknown>
-  assert.equal((metadata as any)?.contact, "support@example.com")
+  const tools = await client.listTools()
+  assert.ok(Array.isArray(tools) && tools.length === 2)
+  assert.ok(tools.some(tool => (tool as any)?.function?.name === "sum_numbers" || (tool as any)?.name === "sum_numbers"))
+  assert.ok(tools.some(tool => (tool as any)?.function?.name === "current_time" || (tool as any)?.name === "current_time"))
+
+  const resources = await client.listResources()
+  assert.ok(Array.isArray(resources) && resources.some(resource => (resource as any)?.id === 'hello'))
+  const resource = await client.readResource('hello')
+  assert.equal(resource, 'Hello Resource hello')
+
+  const prompts = await client.listPrompts()
+  assert.ok(Array.isArray(prompts) && prompts.some(prompt => (prompt as any)?.name === 'greet'))
+  const prompt = await client.getPrompt('greet', { name: 'Sky' }) as Record<string, unknown>
+  assert.equal((prompt as any)?.text, 'Hello Sky')
 
   const result = await client.callTool("sum_numbers", { values: [7, 8, 9] }) as Record<string, unknown>
   assert.equal(result.sum, 24)
+  const content = result.content as unknown[] | undefined
+  assert.ok(Array.isArray(content) && content.length > 0)
+  assert.equal(((content[0] as Record<string, unknown>)?.type), "text")
+
+  const time = await client.callTool("current_time", {}) as Record<string, unknown>
+  assert.ok(typeof (time as any)?.isoTimestamp === "string")
+  const timeContent = time.content as unknown[] | undefined
+  assert.ok(Array.isArray(timeContent) && timeContent.length > 0)
+  assert.equal(((timeContent[0] as Record<string, unknown>)?.type), "text")
 
   await client.shutdown()
 })

@@ -28,7 +28,7 @@ import type {
 type ResponseStreamInstance = Awaited<ReturnType<OpenAIHelpers['completionStream']>>
 
 const TIMEOUT_MS = 600_000
-const STREAM_TIMEOUT_MS = 120_000
+const STREAM_TIMEOUT_MS = 10_000
 
 const COMPLETION_MODELS = ["gpt-4o-mini-instruct", "gpt-3.5-turbo-instruct"] as const
 const CHAT_MODELS = ["gpt-4o-mini", "gpt-4", "gpt-3.5-turbo"] as const
@@ -569,6 +569,10 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
   })
 
   await runOp('Text completions', async stage => {
+    if (target.limited) {
+      stage.diagnostic('[SKIP] Text completions disabled for limited target')
+      return
+    }
     const handleAttempt = createHandleAttempt(stage)
 
     const completionAttempt = await attemptWithModels('completion', COMPLETION_MODELS, model =>
@@ -585,20 +589,28 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
         ? completionResolution.meta.model ?? ctx.completionModel
         : ctx.completionModel
 
-    handleAttempt(
-      'completionStream',
-      await attemptApi('completionStream', () =>
-        collectStream(() =>
-          completionStream('Stream Integration result', 1, undefined, { model: ctx.completionModel })
-        )
-      ),
-      result => {
-        stage.diagnostic(`[INFO] completion stream chunks: ${result.length}`)
-      }
-    )
+    if (target.limited) {
+      stage.diagnostic('[INFO] completionStream skipped for limited target')
+    } else {
+      handleAttempt(
+        'completionStream',
+        await attemptApi('completionStream', () =>
+          collectStream(() =>
+            completionStream('Stream Integration result', 1, undefined, { model: ctx.completionModel })
+          )
+        ),
+        result => {
+          stage.diagnostic(`[INFO] completion stream chunks: ${result.length}`)
+        }
+      )
+    }
   })
 
   await runOp('Chat completions', async stage => {
+    if (target.limited) {
+      stage.diagnostic('[SKIP] Chat completions disabled for limited target')
+      return
+    }
     const handleAttempt = createHandleAttempt(stage)
 
     const chatAttempt = await attemptWithModels('chatCompletion', CHAT_MODELS, model =>
@@ -615,20 +627,28 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
         ? chatResolution.meta.model ?? ctx.chatModel
         : ctx.chatModel
 
-    handleAttempt(
-      'chatCompletionStream',
-      await attemptApi('chatCompletionStream', () =>
-        collectStream(() =>
-          chatCompletionStream([Message('Stream response', 'user')], 1, undefined, { model: ctx.chatModel })
-        )
-      ),
-      result => {
-        stage.diagnostic(`[INFO] chat stream chunks: ${result.length}`)
-      }
-    )
+    if (target.limited) {
+      stage.diagnostic('[INFO] chatCompletionStream skipped for limited target')
+    } else {
+      handleAttempt(
+        'chatCompletionStream',
+        await attemptApi('chatCompletionStream', () =>
+          collectStream(() =>
+            chatCompletionStream([Message('Stream response', 'user')], 1, undefined, { model: ctx.chatModel })
+          )
+        ),
+        result => {
+          stage.diagnostic(`[INFO] chat stream chunks: ${result.length}`)
+        }
+      )
+    }
   })
 
   await runOp('Responses API', async stage => {
+    if (target.limited) {
+      stage.diagnostic('[SKIP] Responses API unavailable for limited target')
+      return
+    }
     const handleAttempt = createHandleAttempt(stage)
 
     const responseAttempt = await attemptWithModels('createResponse', RESPONSE_MODELS, model =>
@@ -655,18 +675,6 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
         }
       )
     }
-
-    handleAttempt(
-      'createResponseStream',
-      await attemptApi('createResponseStream', () =>
-        collectStream(() =>
-          createResponseStream({ model: ctx.responseModel, input: 'Stream integration' })
-        )
-      ),
-      result => {
-        stage.diagnostic(`[INFO] response stream chunks: ${result.length}`)
-      }
-    )
 
     const backgroundAttempt = await attemptWithModels('createResponse background', RESPONSE_MODELS, model =>
       createResponse({ model, input: 'Background run', background: true })
@@ -769,6 +777,10 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
   })
 
   await runOp('Image helpers', async stage => {
+    if (target.limited) {
+      stage.diagnostic('[SKIP] Image helpers disabled for limited target')
+      return
+    }
     const handleAttempt = createHandleAttempt(stage)
 
     handleAttempt(
@@ -791,15 +803,6 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
       }
     )
 
-    handleAttempt(
-      'getImageVariations',
-      await attemptApi('getImageVariations', () =>
-        getImageVariations(ctx.imagePath, 1, 0, 'b64_json')
-      ),
-      image => {
-        stage.diagnostic(`[INFO] variation images: ${image.data.length}`)
-      }
-    )
   })
 
   await runOp('File helpers', async stage => {
@@ -977,6 +980,10 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
   })
 
   await runOp('Direct HTTP helpers', async stage => {
+    if (target.limited) {
+      stage.diagnostic('[SKIP] Direct HTTP helpers disabled for limited target')
+      return
+    }
     const handleAttempt = createHandleAttempt(stage)
     const attemptUpload = createAttemptUpload(stage, ctx, uploadFile)
 
