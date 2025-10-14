@@ -163,11 +163,18 @@ class McpClient {
       if (typeof (output as NodeJS.ReadableStream & { setEncoding?: (encoding: string) => void }).setEncoding === "function") {
         ;(output as NodeJS.ReadableStream & { setEncoding?: (encoding: string) => void }).setEncoding("utf8")
       }
+      const maybeSetDefault = (this.stdioInput as NodeJS.WritableStream & {
+        setDefaultEncoding?: (encoding: string) => boolean
+      }).setDefaultEncoding
+      if (typeof maybeSetDefault === "function") {
+        maybeSetDefault.call(this.stdioInput as NodeJS.WritableStream, "utf8")
+      }
       this.stdioListener = chunk => {
         this.stdioBuffer += chunk.toString()
         let newlineIndex = this.stdioBuffer.indexOf("\n")
         while (newlineIndex !== -1) {
-          const rawLine = this.stdioBuffer.slice(0, newlineIndex).replace(/\r$/, "")
+          const slice = this.stdioBuffer.slice(0, newlineIndex)
+          const rawLine = (typeof slice === "string" ? slice : String(slice)).replace(/\r$/, "")
           this.stdioBuffer = this.stdioBuffer.slice(newlineIndex + 1)
           if (rawLine.trim().length > 0) {
             this.processResponsePayload(rawLine)
