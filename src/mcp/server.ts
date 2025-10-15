@@ -93,6 +93,13 @@ const SESSION_HEADER = "Mcp-Session-Id"
 interface SessionState {
   id?: string
   selectedModel?: string
+  initialized?: boolean
+  initializedNotified?: boolean
+}
+
+interface HttpSseClient {
+  res: ServerResponse
+  heartbeat?: NodeJS.Timeout
 }
 
 const isTextSegment = (value: JsonValue): value is { type: "text"; text: string } =>
@@ -154,9 +161,12 @@ class McpServer<
   private stdioOutput?: NodeJS.WritableStream
   private stdioBuffer = ""
   private stdioListener?: (chunk: Buffer | string) => void
+  private stdioEndListener?: () => void
+  private stdioCloseListener?: () => void
   private started = false
   private readonly httpSessions = new Map<string, SessionState>()
-  private readonly globalSession: SessionState = {}
+  private readonly httpSseClients = new Map<string, Set<HttpSseClient>>()
+  private readonly globalSession: SessionState = { initialized: false, initializedNotified: false }
 
   constructor(options: McpServerOptions<THandlers> = {}) {
     this.options = options
@@ -238,16 +248,45 @@ class McpServer<
       this.httpServerOwned = false
     }
 
-    if (this.stdioInput && this.stdioListener) {
-      this.stdioInput.off("data", this.stdioListener)
-      this.stdioInput = undefined
-      this.stdioOutput = undefined
+    const stdioInput = this.stdioInput
+    if (stdioInput && this.stdioListener) {
+      stdioInput.off("data", this.stdioListener)
       this.stdioListener = undefined
+    }
+    if (stdioInput && this.stdioEndListener) {
+      stdioInput.off("end", this.stdioEndListener)
+      this.stdioEndListener = undefined
+    }
+    if (stdioInput && this.stdioCloseListener) {
+      stdioInput.off("close", this.stdioCloseListener)
+      this.stdioCloseListener = undefined
+    }
+    if (stdioInput) {
+      this.stdioInput = undefined
       this.stdioBuffer = ""
     }
+    this.stdioOutput = undefined
+
+    for (const [, clients] of this.httpSseClients) {
+      for (const client of clients) {
+        if (client.heartbeat) {
+          clearInterval(client.heartbeat)
+        }
+        if (!client.res.writableEnded) {
+          try {
+            client.res.end()
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+    this.httpSseClients.clear()
 
     this.httpSessions.clear()
     this.globalSession.selectedModel = undefined
+    this.globalSession.initialized = false
+    this.globalSession.initializedNotified = false
     this.started = false
   }
 
@@ -283,6 +322,9 @@ class McpServer<
 
     this.stdioInput = input
     this.stdioOutput = output
+    this.globalSession.initialized = false
+    this.globalSession.initializedNotified = false
+    this.globalSession.selectedModel = undefined
     if (typeof (input as NodeJS.ReadableStream & { setEncoding?: (encoding: string) => void }).setEncoding === "function") {
       ;(input as NodeJS.ReadableStream & { setEncoding?: (encoding: string) => void }).setEncoding("utf8")
     }
@@ -317,28 +359,172 @@ class McpServer<
       }
     }
     input.on("data", this.stdioListener)
+
+    this.stdioEndListener = () => {
+      void this.stop()
+    }
+    this.stdioCloseListener = () => {
+      void this.stop()
+    }
+    input.on("end", this.stdioEndListener)
+    input.on("close", this.stdioCloseListener)
+  }
+
+  private extractSessionId(req: IncomingMessage): string | undefined {
+    let sessionId = req.headers[SESSION_HEADER.toLowerCase()]
+    if (Array.isArray(sessionId)) {
+      sessionId = sessionId[0]
+    }
+    if (typeof sessionId !== "string") {
+      return undefined
+    }
+    const trimmed = sessionId.trim()
+    return trimmed.length > 0 ? trimmed : undefined
+  }
+
+  private sendHttpJsonError(res: ServerResponse, statusCode: number, message: string, sessionId?: string): void {
+    if (res.headersSent) return
+    res.statusCode = statusCode
+    res.setHeader("Content-Type", "application/json")
+    res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
+    if (sessionId) {
+      res.setHeader(SESSION_HEADER, sessionId)
+    }
+    res.end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message }
+      })
+    )
+  }
+
+  private teardownHttpSseClients(sessionId: string): void {
+    const clients = this.httpSseClients.get(sessionId)
+    if (!clients) return
+    for (const client of clients) {
+      if (client.heartbeat) {
+        clearInterval(client.heartbeat)
+      }
+      if (!client.res.writableEnded) {
+        try {
+          client.res.end()
+        } catch {
+          // ignore
+        }
+      }
+    }
+    this.httpSseClients.delete(sessionId)
+  }
+
+  private handleHttpStream(req: IncomingMessage, res: ServerResponse): void {
+    const sessionId = this.extractSessionId(req)
+    if (!sessionId) {
+      this.sendHttpJsonError(res, 400, `${SESSION_HEADER} header is required to open an SSE stream`)
+      return
+    }
+    if (!this.httpSessions.has(sessionId)) {
+      this.sendHttpJsonError(res, 404, `Unknown session: ${sessionId}`)
+      return
+    }
+
+    if (typeof req.socket.setTimeout === "function") {
+      req.socket.setTimeout(0)
+    }
+    if (typeof req.socket.setNoDelay === "function") {
+      req.socket.setNoDelay(true)
+    }
+    if (typeof req.socket.setKeepAlive === "function") {
+      req.socket.setKeepAlive(true)
+    }
+
+    res.statusCode = 200
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8")
+    res.setHeader("Cache-Control", "no-cache")
+    res.setHeader("Connection", "keep-alive")
+    res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
+    res.setHeader(SESSION_HEADER, sessionId)
+    res.setHeader("X-Accel-Buffering", "no")
+
+    const stream: HttpSseClient = { res }
+    const heartbeat = setInterval(() => {
+      if (!res.writableEnded) {
+        res.write(`: heartbeat ${Date.now()}\n\n`)
+      }
+    }, 15000)
+    stream.heartbeat = heartbeat
+
+    const clients = this.httpSseClients.get(sessionId) ?? new Set<HttpSseClient>()
+    clients.add(stream)
+    this.httpSseClients.set(sessionId, clients)
+
+    const cleanup = () => {
+      if (stream.heartbeat) {
+        clearInterval(stream.heartbeat)
+        stream.heartbeat = undefined
+      }
+      const bucket = this.httpSseClients.get(sessionId)
+      if (bucket) {
+        bucket.delete(stream)
+        if (bucket.size === 0) {
+          this.httpSseClients.delete(sessionId)
+        }
+      }
+    }
+
+    req.on("close", cleanup)
+    req.on("aborted", cleanup)
+    res.on("close", cleanup)
+
+    if (typeof res.flushHeaders === "function") {
+      res.flushHeaders()
+    }
+    res.write(": stream-open\n\n")
+  }
+
+  private handleHttpDelete(req: IncomingMessage, res: ServerResponse): void {
+    const sessionId = this.extractSessionId(req)
+    if (!sessionId) {
+      this.sendHttpJsonError(res, 400, `${SESSION_HEADER} header is required to delete a session`)
+      return
+    }
+    if (!this.httpSessions.has(sessionId)) {
+      this.sendHttpJsonError(res, 404, `Unknown session: ${sessionId}`)
+      return
+    }
+
+    this.httpSessions.delete(sessionId)
+    this.teardownHttpSseClients(sessionId)
+
+    res.statusCode = 204
+    res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
+    res.end()
   }
 
   private async handleHttpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const { path = DEFAULT_PATH } = this.options
-    if (req.method !== "POST" || (req.url ?? "") !== path) {
+    const requestPath = (req.url ?? "").split("?")[0]
+    if (requestPath !== path) {
       res.statusCode = 404
       res.end()
       return
     }
 
-    let sessionId = req.headers[SESSION_HEADER.toLowerCase()]
-    if (Array.isArray(sessionId)) {
-      sessionId = sessionId[0]
+    if (req.method === "GET") {
+      this.handleHttpStream(req, res)
+      return
     }
-    sessionId = typeof sessionId === "string" && sessionId.trim().length > 0 ? sessionId.trim() : undefined
-    if (!sessionId) {
-      sessionId = randomUUID()
+
+    if (req.method === "DELETE") {
+      this.handleHttpDelete(req, res)
+      return
     }
-    let session = this.httpSessions.get(sessionId)
-    if (!session) {
-      session = { id: sessionId }
-      this.httpSessions.set(sessionId, session)
+
+    if (req.method !== "POST") {
+      res.statusCode = 405
+      res.setHeader("Allow", "GET,POST,DELETE")
+      res.end()
+      return
     }
 
     const chunks: Buffer[] = []
@@ -349,25 +535,48 @@ class McpServer<
     try {
       const payload = Buffer.concat(chunks).toString() || "{}"
       const request = JSON.parse(payload) as JsonRpcRequest
+      const method = typeof request.method === "string" ? request.method : ""
+
+      let sessionId = this.extractSessionId(req)
+      let session: SessionState | undefined
+      if (!sessionId) {
+        if (method === "initialize") {
+          sessionId = randomUUID()
+          session = { id: sessionId, initialized: false, initializedNotified: false }
+          this.httpSessions.set(sessionId, session)
+        } else {
+          this.sendHttpJsonError(res, 400, `${SESSION_HEADER} header is required after initialization`)
+          return
+        }
+      }
+
+      session = session ?? this.httpSessions.get(sessionId)
+      if (!session) {
+        if (method === "initialize") {
+          session = { id: sessionId, initialized: false, initializedNotified: false }
+          this.httpSessions.set(sessionId, session)
+        } else {
+          this.sendHttpJsonError(res, 404, `Unknown session: ${sessionId}`, sessionId)
+          return
+        }
+      }
+
       const response = await this.handleMessage(request, session)
+      res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
+      res.setHeader(SESSION_HEADER, sessionId)
       if (!response) {
-        res.statusCode = 204
-        res.setHeader(SESSION_HEADER, sessionId)
-        res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
+        res.statusCode = 202
         res.end()
         return
       }
       const body = JSON.stringify(response)
       res.statusCode = 200
       res.setHeader("Content-Type", "application/json")
-      res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
-      res.setHeader(SESSION_HEADER, sessionId)
       res.end(body)
     } catch (error) {
       res.statusCode = 400
       res.setHeader("Content-Type", "application/json")
       res.setHeader("MCP-Protocol-Version", MCP_PROTOCOL_VERSION)
-      res.setHeader(SESSION_HEADER, sessionId)
       res.end(
         JSON.stringify({
           jsonrpc: "2.0",
@@ -389,6 +598,15 @@ class McpServer<
 
     const method = request.method
 
+    if (method === "notifications/initialized" || method === "initialized") {
+      session.initializedNotified = true
+      return undefined
+    }
+
+    if (!session.initialized && method !== "initialize") {
+      return error(-32002, "Server has not completed initialization")
+    }
+
     if (method === "initialize") {
       const params = (request.params ?? {}) as JsonRecord
       const requestedVersionValue = (params["protocolVersion"] ?? params["mcpVersion"]) as JsonValue
@@ -397,6 +615,7 @@ class McpServer<
         requestedVersion && requestedVersion.trim() === MCP_PROTOCOL_VERSION ? requestedVersion : MCP_PROTOCOL_VERSION
 
       session.selectedModel = undefined
+      session.initializedNotified = false
 
       const capabilities: Record<string, JsonValue> = {}
       const toolCaps: JsonRecord = { list: true, invoke: true, call: true }
@@ -458,11 +677,8 @@ class McpServer<
         result.sessionId = session.id
         result.session_id = session.id
       }
+      session.initialized = true
       return success(result)
-    }
-
-    if (method === "notifications/initialized" || method === "initialized") {
-      return undefined
     }
 
     if (method === "ping") {
