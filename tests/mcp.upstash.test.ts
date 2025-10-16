@@ -41,7 +41,7 @@ test("upstash/context7-mcp via npx (stdio)", { timeout: 180_000 }, async (t) => 
 
     const tools = await client.listTools()
     assert.ok(Array.isArray(tools), "tools should be an array")
-    assert.ok(tools.length >= 0, "tools array should be returned (may be empty)")
+    assert.ok(tools.length > 0, "tools array should be returned (should not be empty)")
   } finally {
     await client.disconnect().catch(() => {})
   }

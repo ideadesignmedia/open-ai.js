@@ -74,6 +74,8 @@ class McpClient {
   private stdioOutput?: NodeJS.ReadableStream
   private stdioBuffer = ""
   private stdioListener?: (chunk: Buffer | string) => void
+  private stdioInvalidJsonWarned = false
+  private serverLabel?: string
   private negotiatedProtocolVersion?: string
   private requestId = 0
   private readonly pending = new Map<number, PendingRequest>()
@@ -237,6 +239,8 @@ class McpClient {
       if (typeof maybeSetDefault === "function") {
         maybeSetDefault.call(this.stdioInput as NodeJS.WritableStream, "utf8")
       }
+      // Reset one-time warning state on (re)connect
+      this.stdioInvalidJsonWarned = false
       this.stdioListener = chunk => {
         this.stdioBuffer += chunk.toString()
         let newlineIndex = this.stdioBuffer.indexOf("\n")
@@ -386,6 +390,21 @@ class McpClient {
       typeof negotiated === "string" && negotiated.trim().length > 0
         ? negotiated
         : (typeof requested === "string" ? requested : this.protocolVersion)
+
+    // Capture server label for diagnostics (e.g., one-time invalid JSON warning on stdio)
+    if (result && typeof result === "object") {
+      const rec = result as Record<string, unknown>
+      const info = rec["serverInfo"]
+      if (info && typeof info === "object") {
+        const name = (info as Record<string, unknown>)["name"]
+        const version = (info as Record<string, unknown>)["version"]
+        const nameStr = typeof name === "string" && name.trim().length > 0 ? name.trim() : undefined
+        const verStr = typeof version === "string" && version.trim().length > 0 ? version.trim() : undefined
+        if (nameStr || verStr) {
+          this.serverLabel = nameStr ? (verStr ? `${nameStr} v${verStr}` : nameStr) : (verStr ? `v${verStr}` : undefined)
+        }
+      }
+    }
 
     return result
   }
@@ -724,6 +743,12 @@ class McpClient {
     try {
       message = JSON.parse(payload) as JsonRpcResponse
     } catch {
+      // During stdio connections, ignore invalid JSON but emit a one-time warning.
+      if (this.transport === "stdio" && !this.stdioInvalidJsonWarned) {
+        const label = this.serverLabel?.trim().length ? this.serverLabel : (this.stdioOptions?.command || "MCP server")
+        console.warn(`[mcp-client:stdio] ${label} responded with invalid JSON on stdio; ignoring malformed line(s).`)
+        this.stdioInvalidJsonWarned = true
+      }
       return
     }
     if (message.id === undefined || message.id === null) {
