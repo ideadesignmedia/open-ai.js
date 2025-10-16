@@ -1,6 +1,6 @@
 {
     "name": "@ideadesignmedia/open-ai.js",
-    "version": "2.1.15",
+    "version": "2.1.16",
     "main": "dist/index.js",
     "author": "Sam Wagner <60307610+ideadesignmedia@users.noreply.github.com>",
     "license": "MIT",
@@ -25,7 +25,8 @@
         "build": "tsc",
         "test-openai": "node --test-timeout=60000 --require ts-node/register --test tests/openai.integration.test.ts",
         "test-upstash": "node --test-timeout=60000 --require ts-node/register --test tests/mcp.upstash.test.ts",
-        "test": "node --test-timeout=40000 --require ts-node/register --test tests/**/*.ts"
+        "test": "node --test-timeout=40000 --require ts-node/register --test tests/**/*.ts",
+        "test-standard": "npx @modelcontextprotocol/inspector"
     },
     "types": "dist/index.d.ts",
     "exports": {

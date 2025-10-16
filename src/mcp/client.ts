@@ -153,10 +153,11 @@ class McpClient {
             return spawn(shell, ["/d", "/c", cmd, ...argv], {
               cwd: stdioOptions.cwd,
               env: stdioOptions.env,
-              stdio: "pipe"
+              stdio: "pipe",
+              windowsHide: true
             })
           }
-          return spawn(cmd, argv, { cwd: stdioOptions.cwd, env: stdioOptions.env, stdio: "pipe" })
+          return spawn(cmd, argv, { cwd: stdioOptions.cwd, env: stdioOptions.env, stdio: "pipe", windowsHide: true })
         }
 
         let child: ChildProcessWithoutNullStreams | undefined
@@ -789,7 +790,7 @@ class McpClient {
       }
       // Try where.exe for each candidate
       for (const cand of candidates) {
-        const out = spawnSync("where", [cand], { encoding: "utf8" })
+        const out = spawnSync("where", [cand], { encoding: "utf8", windowsHide: true })
         if (!out.error && out.status === 0 && typeof out.stdout === "string") {
           const lines = out.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
           // Prefer .cmd/.exe/.bat over extensionless entries
@@ -815,7 +816,7 @@ class McpClient {
     }
 
     // POSIX: try `which`
-    const which = spawnSync("which", [command], { encoding: "utf8" })
+    const which = spawnSync("which", [command], { encoding: "utf8", windowsHide: true })
     if (!which.error && which.status === 0 && typeof which.stdout === "string") {
       const line = which.stdout.split(/\r?\n/).find(l => l.trim().length > 0)
       if (line && fs.existsSync(line.trim())) return line.trim()
