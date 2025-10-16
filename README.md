@@ -18,7 +18,9 @@ TypeScript-first helpers for OpenAI‑compatible APIs, a unified multi‑provide
   - [Custom Fetch / Transport Overrides](#custom-fetch--transport-overrides)
 - [MCP Server and Client Toolkit](#mcp-server-and-client-toolkit)
   - [Authoring Custom Tools](#authoring-custom-tools)
+  - [Start the Server](#start-the-server)
   - [Transports: WebSocket, HTTP, STDIO](#transports-websocket-http-stdio)
+  - [Client Quick Start](#client-quick-start)
   - [Bridging LLM Tool Calls to MCP](#bridging-llm-tool-calls-to-mcp)
 - [Exports & Capabilities](#exports--capabilities)
 - [Troubleshooting & Tips](#troubleshooting--tips)
@@ -460,6 +462,165 @@ const incident = await client.callTool('get_incident_status', { ticket: 'INC-42'
 This pattern keeps LLM glue thin, with full MCP logging and transport flexibility.
 
 ---
+
+## MCP Server and Client Toolkit
+
+This package includes a spec-compliant MCP server and client with multiple transports (stdio, WebSocket, HTTP). Below are concise, correct usage patterns for both, including how to start a server using this package.
+
+### Authoring Custom Tools
+
+Use the same tool schema helpers used for OpenAI tool calling. Register tool handlers on the server.
+
+```ts
+import { defineFunctionTool, defineObjectSchema, McpServer, type McpToolHandlerOptions } from '@ideadesignmedia/open-ai.js'
+
+const sumTool = defineFunctionTool({
+  type: 'function',
+  function: {
+    name: 'sum_numbers',
+    description: 'Sum an array of numbers',
+    parameters: defineObjectSchema({
+      type: 'object',
+      properties: { values: { type: 'array', items: { type: 'number' }, minItems: 1 } },
+      required: ['values'],
+      additionalProperties: false
+    } as const)
+  }
+} as const)
+
+const tools: ReadonlyArray<McpToolHandlerOptions> = [
+  { tool: sumTool, async handler({ values }) { return (values as number[]).reduce((t, n) => t + n, 0) } }
+]
+
+const server = new McpServer({ transports: ['stdio', 'websocket', 'http'], port: 3030, path: '/mcp', tools })
+await server.start()
+```
+
+### Start the Server
+
+- Programmatic (recommended):
+
+```ts
+import { startMockMcpServer } from '@ideadesignmedia/open-ai.js'
+
+// Starts an MCP server immediately. When `stdio` is included, it binds to process stdin/stdout.
+await startMockMcpServer({ transports: ['stdio', 'websocket', 'http'], port: 3030, path: '/mcp' })
+```
+
+- As a dedicated stdio server script (for editors/hosts that launch an MCP process):
+
+```ts
+// mcp-stdio.ts
+import { startMockMcpServer } from '@ideadesignmedia/open-ai.js'
+await startMockMcpServer({ transports: ['stdio'] })
+```
+
+```bash
+node mcp-stdio.ts
+```
+
+- From the built package (local dev):
+
+```bash
+npm run build
+node dist/scripts/mock-mcp-server.js --transports stdio,websocket,http --port 3030 --path /mcp
+```
+
+The built script binds stdio automatically if `stdio` is among transports and serves WS/HTTP at `ws://localhost:3030/mcp` and `http://localhost:3030/mcp`.
+
+### Transports: WebSocket, HTTP, STDIO
+
+Server supports any combination of:
+
+- `stdio` — JSON-RPC over newline-delimited stdio (ideal for local plugins)
+- `websocket` — JSON-RPC over WS at `ws://host:port/path`
+- `http` — JSON-RPC over HTTP POST at `http://host:port/path` (server also supports SSE replies when appropriate)
+
+### Client Quick Start
+
+The client mirrors the transports and speaks JSON-RPC per the MCP spec. Typical flow: `connect() → initialize() → sendInitialized() → list/call`.
+
+- WebSocket
+
+```ts
+import { McpClient } from '@ideadesignmedia/open-ai.js'
+
+const client = new McpClient({ transport: 'websocket', url: 'ws://localhost:3030/mcp' })
+await client.connect()
+
+const init = await client.initialize({ clientInfo: { name: 'example', version: '1.0.0' } })
+await client.sendInitialized()
+
+const tools = await client.listTools()
+const result = await client.callTool('sum_numbers', { values: [1, 2, 3] })
+```
+
+- HTTP
+
+```ts
+const httpClient = new McpClient({ transport: 'http', url: 'http://localhost:3030/mcp' })
+const init = await httpClient.initialize({ clientInfo: { name: 'example', version: '1.0.0' } })
+const tools = await httpClient.listTools()
+```
+
+- STDIO (spawn a process that implements stdio MCP, including servers started with `startMockMcpServer({ transports: ['stdio'] })`)
+
+```ts
+const stdioClient = new McpClient({
+  transport: 'stdio',
+  stdio: { command: 'node', args: ['dist/scripts/mock-mcp-server.js', '--transports', 'stdio'] }
+})
+await stdioClient.connect()
+await stdioClient.initialize({ clientInfo: { name: 'example', version: '1.0.0' } })
+```
+
+Common client helpers:
+
+```ts
+await client.listTools()
+await client.callTool('name', { /* args */ })
+await client.listResources(); await client.readResource('id-or-uri')
+await client.listPrompts(); await client.getPrompt('name', { /* args */ })
+await client.listModels(); await client.getModel('name'); await client.selectModel('name')
+await client.getMetadata(); // or getMetadataEntry('key')
+```
+
+### Bridging LLM Tool Calls to MCP
+
+The same `defineFunctionTool` schemas you pass to OpenAI tool-calling can be exposed via the MCP server. This lets model tool-calls seamlessly invoke your MCP tools in hosts that speak the protocol.
+
+```ts
+import OpenAIClient, { defineFunctionTool, defineObjectSchema, McpServer } from '@ideadesignmedia/open-ai.js'
+
+const weatherTool = defineFunctionTool({
+  type: 'function',
+  function: {
+    name: 'get_weather',
+    description: 'Return the temperature for a city',
+    parameters: defineObjectSchema({
+      type: 'object',
+      properties: { city: { type: 'string' } },
+      required: ['city'],
+      additionalProperties: false
+    } as const)
+  }
+} as const)
+
+const server = new McpServer({ transports: ['websocket'], tools: [
+  { tool: weatherTool, async handler({ city }) { return { temperature: 72, city } } }
+] })
+await server.start()
+
+// The very same tool can be provided to OpenAI tool-calling:
+const openai = new OpenAIClient({ apiKey: process.env.OPEN_AI_API_KEY! })
+const response = await openai.chatCompletion(
+  [/* messages */],
+  1,
+  undefined,
+  { model: 'gpt-4o-mini', tools: [weatherTool], tool_choice: 'auto' }
+)
+```
+
 ## Exports & Capabilities
 
 - Default export `OpenAIClient` – typed helpers for OpenAI-compatible endpoints:

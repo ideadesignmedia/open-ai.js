@@ -1,5 +1,7 @@
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process"
+import fs from "node:fs"
+import path from "node:path"
 
 import { WebSocket } from "ws"
 
@@ -138,11 +140,77 @@ class McpClient {
       if (this.stdioInput || this.stdioOutput) return
       const stdioOptions = this.stdioOptions!
       if (stdioOptions.command) {
-        this.stdioProcess = spawn(stdioOptions.command, stdioOptions.args ?? [], {
-          cwd: stdioOptions.cwd,
-          env: stdioOptions.env,
-          stdio: "pipe"
+        const resolved = McpClient.resolveCommandPath(stdioOptions.command) ?? stdioOptions.command
+        const args = stdioOptions.args ?? []
+        const spawnOnce = (cmd: string, argv: string[]): ChildProcessWithoutNullStreams => {
+          const isWin = process.platform === "win32"
+          const lower = cmd.toLowerCase()
+          const needsCmdShell = isWin && (lower.endsWith(".cmd") || lower.endsWith(".bat"))
+          if (needsCmdShell) {
+            const shell = process.env.ComSpec || "cmd.exe"
+            return spawn(shell, ["/d", "/c", cmd, ...argv], {
+              cwd: stdioOptions.cwd,
+              env: stdioOptions.env,
+              stdio: "pipe"
+            })
+          }
+          return spawn(cmd, argv, { cwd: stdioOptions.cwd, env: stdioOptions.env, stdio: "pipe" })
+        }
+
+        let child: ChildProcessWithoutNullStreams | undefined
+        try {
+          child = spawnOnce(resolved, args)
+        } catch (err) {
+          // Rare sync throw path; try resolve + retry below
+          const retry = McpClient.resolveCommandPath(stdioOptions.command)
+          if (retry && retry !== resolved) {
+            child = spawnOnce(retry, args)
+          } else {
+            throw err
+          }
+        }
+
+        this.stdioProcess = child
+        // Await spawn/error so connect() reflects success/failure early
+        await new Promise<void>((resolve, reject) => {
+          let settled = false
+          const timer = setTimeout(() => {
+            if (!settled) {
+              settled = true
+              reject(new Error("STDIO spawn timeout"))
+            }
+          }, 15_000)
+          child!.once("spawn", () => {
+            if (!settled) {
+              settled = true
+              clearTimeout(timer)
+              resolve()
+            }
+          })
+          child!.once("error", (error) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timer)
+            // Attempt late resolution/retry for ENOENT
+            if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+              const retryPath = McpClient.resolveCommandPath(stdioOptions.command!)
+              if (retryPath) {
+                try {
+                  const retried = spawnOnce(retryPath, args)
+                  this.stdioProcess = retried
+                  retried.once("spawn", () => resolve())
+                  retried.once("error", reject)
+                  return
+                } catch (e) {
+                  reject(e)
+                  return
+                }
+              }
+            }
+            reject(error)
+          })
         })
+
         this.stdioInput = this.stdioProcess.stdin
         this.stdioOutput = this.stdioProcess.stdout
         this.stdioProcess.stderr?.on("data", data => {
@@ -677,6 +745,63 @@ class McpClient {
       entry.reject(error)
     }
     this.pending.clear()
+  }
+
+  private static resolveCommandPath(command: string): string | null {
+    // If command is already a path to an existing file, return it
+    try {
+      if (path.isAbsolute(command) || command.includes(path.sep)) {
+        if (fs.existsSync(command)) return command
+      }
+    } catch {}
+
+    const isWin = process.platform === "win32"
+    const candidates: string[] = []
+    if (isWin) {
+      const exts = ["", ".cmd", ".exe", ".bat"]
+      for (const ext of exts) {
+        candidates.push(command.endsWith(ext) ? command : command + ext)
+      }
+      // Try where.exe for each candidate
+      for (const cand of candidates) {
+        const out = spawnSync("where", [cand], { encoding: "utf8" })
+        if (!out.error && out.status === 0 && typeof out.stdout === "string") {
+          const lines = out.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+          // Prefer .cmd/.exe/.bat over extensionless entries
+          const prefer = [".cmd", ".exe", ".bat", ""]
+          for (const ext of prefer) {
+            const match = lines.find(l => l.toLowerCase().endsWith(ext))
+            if (match && fs.existsSync(match)) return match
+          }
+          // fallback to first existing
+          const any = lines.find(l => fs.existsSync(l))
+          if (any) return any
+        }
+      }
+      // Manual PATH search
+      const PATH = process.env.PATH ?? ""
+      for (const dir of PATH.split(";")) {
+        for (const ext of [".cmd", ".exe", ".bat", ""]) {
+          const p = path.join(dir, command.endsWith(ext) ? command : command + ext)
+          try { if (fs.existsSync(p)) return p } catch {}
+        }
+      }
+      return null
+    }
+
+    // POSIX: try `which`
+    const which = spawnSync("which", [command], { encoding: "utf8" })
+    if (!which.error && which.status === 0 && typeof which.stdout === "string") {
+      const line = which.stdout.split(/\r?\n/).find(l => l.trim().length > 0)
+      if (line && fs.existsSync(line.trim())) return line.trim()
+    }
+    // Manual PATH search
+    const PATH = process.env.PATH ?? ""
+    for (const dir of PATH.split(":")) {
+      const p = path.join(dir, command)
+      try { if (fs.existsSync(p)) return p } catch {}
+    }
+    return null
   }
 }
 
