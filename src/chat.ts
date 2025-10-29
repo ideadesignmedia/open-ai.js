@@ -4,6 +4,7 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsFunctionTool,
   ChatRole,
+  ChatToolCall,
   CompletionRequestOptions,
   JsonRecord,
   JsonValue,
@@ -40,9 +41,10 @@ interface ChatCompletionRequestPayload<
  * @param content - Message body (text, JSON, or structured array/object content).
  * @param role - Chat role to attach to the message; defaults to `assistant`.
  */
-const Message = <TContent extends JsonValue = string>(content: TContent, role: ChatRole = 'assistant'): MessagePayload<TContent> => ({
+const Message = <TContent extends JsonValue = string>(content: TContent | null, role: ChatRole = 'assistant', tool_calls?: ChatToolCall[]): MessagePayload<TContent> => ({
   role,
-  content
+  content,
+  tool_calls
 })
 
 /**
@@ -169,4 +171,5 @@ const createChatClient = (http: HttpClient) => {
   }
 }
 
-export { Message, createChatClient }
+export { Message, createChatClient }
+

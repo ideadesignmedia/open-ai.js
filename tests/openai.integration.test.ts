@@ -22,7 +22,9 @@ import type {
   ModerationResponse,
   ResponseStreamEvent,
   ResponseStreamError,
-  OpenAIHelpers
+  OpenAIHelpers,
+  ChatCompletionsFunctionTool,
+  MessagePayload
 } from "../index"
 
 type ResponseStreamInstance = Awaited<ReturnType<OpenAIHelpers['completionStream']>>
@@ -641,6 +643,81 @@ const runIntegration = async (t: TestContext, target: TargetConfig) => {
           stage.diagnostic(`[INFO] chat stream chunks: ${result.length}`)
         }
       )
+
+      const timeTool: ChatCompletionsFunctionTool = {
+        type: 'function',
+        function: {
+          name: 'current_time',
+          description: 'Returns the current time as an ISO 8601 string.',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        }
+      }
+
+      const systemPrompt = Message('You are helpful and use your tools to help satisfy requests', 'system') as MessagePayload
+      const userPrompt = Message('What time is it?', 'user') as MessagePayload
+      const baseMessages: MessagePayload[] = [systemPrompt, userPrompt]
+
+      const toolResolution = handleAttempt(
+        'chatCompletion tool call',
+        await attemptApi('chatCompletion tool call', () =>
+          chatCompletion(baseMessages, 1, undefined, {
+            model: ctx.chatModel,
+            tools: [timeTool],
+            tool_choice: { type: 'function', function: { name: timeTool.function.name } }
+          })
+        ),
+        result => {
+          const finishReason = result.choices[0]?.finish_reason ?? 'unknown'
+          stage.diagnostic(`[INFO] tool call finish_reason: ${finishReason}`)
+        }
+      )
+
+      if (toolResolution.status === 'skip') {
+        return toolResolution.reason ?? 'tool call skipped'
+      }
+
+      if (toolResolution.status === 'ok') {
+        const choiceWithTool = toolResolution.value.choices.find(choice => choice.message?.tool_calls?.length)
+
+        if (!choiceWithTool || !choiceWithTool.message?.tool_calls?.length) {
+          stage.diagnostic('[INFO] tool call not returned; skipping tool follow-up')
+        } else {
+          const toolCalls = choiceWithTool.message.tool_calls ?? []
+          const assistantToolMessage: MessagePayload = {
+            role: 'assistant',
+            content: null,
+            tool_calls: toolCalls
+          }
+          const toolResult = new Date().toISOString()
+          const toolResponse: MessagePayload = {
+            role: 'tool',
+            content: toolResult,
+            tool_call_id: toolCalls[0]?.id ?? ''
+          }
+
+          const followUpMessages: MessagePayload[] = [...baseMessages, assistantToolMessage, toolResponse]
+
+          handleAttempt(
+            'chatCompletion tool follow-up',
+            await attemptApi('chatCompletion tool follow-up', () =>
+              chatCompletion(followUpMessages, 1, undefined, {
+                model: ctx.chatModel,
+                tools: [timeTool],
+                tool_choice: 'none'
+              })
+            ),
+            result => {
+              const assistantReply = result.choices[0]?.message?.content ?? ''
+              stage.diagnostic(`[INFO] tool follow-up reply: ${assistantReply.slice(0, 80)}`)
+              assert.ok(assistantReply.length > 0, 'assistant reply should not be empty after tool call')
+            }
+          )
+        }
+      }
     }
   })
 
