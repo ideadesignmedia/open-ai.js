@@ -56,7 +56,7 @@ const {
 import OpenAIClient, { Message } from '@ideadesignmedia/open-ai.js'
 
 const openai = new OpenAIClient({
-  apiKey: process.env.OPEN_AI_API_KEY!,
+  key: process.env.OPEN_AI_API_KEY!,
   organization: process.env.OPEN_AI_ORGANIZATION
 })
 
@@ -169,8 +169,8 @@ Point the client to any OpenAI-compatible base URL.
 
 ```ts
 const alt = new OpenAIClient({
-  apiKey: process.env.ALT_KEY!,
-  baseURL: 'https://my-compat-endpoint/v1'
+  key: process.env.ALT_KEY!,
+  host: 'https://my-compat-endpoint/v1'
 })
 
 const r = await alt.completion('hello', 1, undefined, { model: 'llama-3-instruct' })
