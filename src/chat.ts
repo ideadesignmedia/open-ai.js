@@ -41,10 +41,11 @@ interface ChatCompletionRequestPayload<
  * @param content - Message body (text, JSON, or structured array/object content).
  * @param role - Chat role to attach to the message; defaults to `assistant`.
  */
-const Message = <TContent extends JsonValue = string>(content: TContent | null, role: ChatRole = 'assistant', tool_calls?: ChatToolCall[]): MessagePayload<TContent> => ({
+const Message = <TContent extends JsonValue = string>(content: TContent | null, role: ChatRole = 'assistant', tool_calls?: ChatToolCall[], tool_call_id?: string): MessagePayload<TContent> => ({
   role,
   content,
-  tool_calls
+  tool_calls,
+  tool_call_id
 })
 
 /**

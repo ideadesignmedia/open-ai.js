@@ -1,33 +1,9 @@
-﻿# @ideadesignmedia/open-ai.js
+# @ideadesignmedia/open-ai.js
 
-TypeScript-first helpers for OpenAI‑compatible APIs, a unified multi‑provider LLM client, and a spec‑compliant Model Context Protocol (MCP) server/client toolkit. Use one ergonomic, strongly typed surface for chat, Responses API, tools, vector stores, images, audio, and more.
-
-## Table of Contents
-- [Installation](#installation)
-- [Importing](#importing)
-- [Quick Start: OpenAI Helpers](#quick-start-openai-helpers)
-  - [Chat and Tool Calling](#chat-and-tool-calling)
-  - [Streaming Responses](#streaming-responses)
-  - [Images, Audio, Files, and Vector Stores](#images-audio-files-and-vector-stores)
-  - [Fine-Tuning and Moderation](#fine-tuning-and-moderation)
-- [Typing Tool Parameters](#typing-tool-parameters)
-- [Working with Alternative Endpoints](#working-with-alternative-endpoints)
-- [Unified LLM Client](#unified-llm-client)
-  - [Provider Setups](#provider-setups)
-  - [Shared Tools and Model Discovery](#shared-tools-and-model-discovery)
-  - [Custom Fetch / Transport Overrides](#custom-fetch--transport-overrides)
-- [MCP Server and Client Toolkit](#mcp-server-and-client-toolkit)
-  - [Authoring Custom Tools](#authoring-custom-tools)
-  - [Start the Server](#start-the-server)
-  - [Transports: WebSocket, HTTP, STDIO](#transports-websocket-http-stdio)
-  - [Client Quick Start](#client-quick-start)
-  - [Bridging LLM Tool Calls to MCP](#bridging-llm-tool-calls-to-mcp)
-- [Exports & Capabilities](#exports--capabilities)
-- [Troubleshooting & Tips](#troubleshooting--tips)
-
----
+TypeScript-first helpers for OpenAI-compatible APIs, a unified multi-provider LLM client, and a Model Context Protocol (MCP) server and client toolkit. One ergonomic, strongly typed surface for chat, Responses API, tools, vector stores, images, audio, files, moderation, embeddings, and models.
 
 ## Installation
+
 ```bash
 # npm
 npm install @ideadesignmedia/open-ai.js
@@ -39,38 +15,42 @@ yarn add @ideadesignmedia/open-ai.js
 pnpm add @ideadesignmedia/open-ai.js
 ```
 
-> `sharp` is used by the image helpers. Ensure your runtime can load native add‑ons (Windows may need the Visual C++ build tools; Alpine should install `libvips`).
-
----
+Node 18+ is recommended for global `fetch` and `FormData`. If you use image helpers at runtime, ensure your environment supports native addons such as `sharp`.
 
 ## Importing
 
-This package supports both ESM and CommonJS.
-
-- ESM: `import OpenAIClient from '@ideadesignmedia/open-ai.js'`
-- CommonJS: `const OpenAIClient = require('@ideadesignmedia/open-ai.js')`
-
-Named exports for utilities and types (ESM):
+ESM:
 
 ```ts
-import {
-  McpClient,
+import OpenAIClient, {
+  Message,
   McpServer,
+  McpClient,
+  UnifiedLLMClient,
   defineFunctionTool,
-  defineObjectSchema,
-  UnifiedLLMClient
+  defineObjectSchema
 } from '@ideadesignmedia/open-ai.js'
 ```
 
-CommonJS consumers can also import individual helpers:
+CommonJS:
 
 ```js
-const { McpClient, McpServer, defineFunctionTool } = require('@ideadesignmedia/open-ai.js')
+const OpenAIClient = require('@ideadesignmedia/open-ai.js')
+const {
+  Message,
+  McpServer,
+  McpClient,
+  UnifiedLLMClient,
+  defineFunctionTool,
+  defineObjectSchema
+} = require('@ideadesignmedia/open-ai.js')
 ```
 
 ---
 
-## Quick Start: OpenAI Helpers
+## Quick start: OpenAI helpers
+
+### Chat and tool calling
 
 ```ts
 import OpenAIClient, { Message } from '@ideadesignmedia/open-ai.js'
@@ -79,11 +59,7 @@ const openai = new OpenAIClient({
   apiKey: process.env.OPEN_AI_API_KEY!,
   organization: process.env.OPEN_AI_ORGANIZATION
 })
-```
 
-### Chat and Tool Calling
-
-```ts
 const weatherTool = {
   type: 'function' as const,
   function: {
@@ -95,14 +71,15 @@ const weatherTool = {
         city: { type: 'string', description: 'City name' },
         units: { type: 'string', enum: ['metric', 'imperial'] }
       },
-      required: ['city']
+      required: ['city'],
+      additionalProperties: false
     }
   }
 }
 
-const response = await openai.chatCompletion(
+const completion = await openai.chatCompletion(
   [
-    Message('You are a weather assistant.', 'system'),
+    Message('You are a helpful assistant.', 'system'),
     Message('What is the weather in Paris?', 'user')
   ],
   1,
@@ -114,47 +91,45 @@ const response = await openai.chatCompletion(
   }
 )
 
-const firstChoice = response.choices[0]
-if (firstChoice.message.tool_calls?.length) {
-  // Call your real tool, then feed the result back with another Message('tool payload', 'tool')
+const first = completion.choices[0]
+if (first.message.tool_calls?.length) {
+  // call get_weather(...)
+  // push another Message(JSON.stringify(result), 'tool') and call chatCompletion again
 }
 ```
 
-### Streaming Responses
-
-Use the `ResponseStream` helper for streaming chat completions or the Responses API.
+### Streaming chat
 
 ```ts
 const stream = await openai.chatCompletionStream(
-  [Message('Stream a haiku about MCP.', 'user')],
+  [Message('Write one short line about MCP.', 'user')],
   1,
   undefined,
   { model: 'gpt-4o-mini' }
 )
 
 stream.onData = (delta) => process.stdout.write(delta ?? '')
-stream.onError = (err) => console.error('[stream-error]', err)
-stream.onComplete = (chunks) => {
-  console.log('\nfinished', chunks.join(''))
-}
+stream.onError = (err) => console.error('stream error:', err)
+stream.onComplete = () => process.stdout.write('\n')
 ```
 
-### Images, Audio, Files, and Vector Stores
+### Images, audio, files, vector stores
 
 ```ts
-// Images (uses sharp under the hood)
+// Image generation
 const image = await openai.generateImage({
-  prompt: 'Blueprint of an MCP-compliant server rack',
+  prompt: 'Blueprint of a minimal MCP architecture',
   size: '512x512'
 })
 
-// Text-to-speech
+// Text to speech
 const speech = await openai.generateSpeech({
   model: 'gpt-4o-mini-tts',
-  input: 'Welcome to the MCP operations center.'
+  input: 'Welcome to the control room.'
 })
 
 // Whisper transcription
+import { createReadStream } from 'node:fs'
 const transcript = await openai.getTranscription({
   file: createReadStream('meeting.mp3'),
   model: 'whisper-1'
@@ -162,34 +137,50 @@ const transcript = await openai.getTranscription({
 
 // Files and vector stores
 const file = await openai.uploadFile('knowledge.jsonl', 'fine-tune')
-const store = await openai.createVectorStore({ name: 'mcp-knowledge' })
+const store = await openai.createVectorStore({ name: 'docs' })
 await openai.addFileToVectorStore(store.id, file.id)
-const search = await openai.searchVectorStore(store.id, { query: 'tools handshake' })
+const search = await openai.searchVectorStore(store.id, { query: 'handshake' })
 ```
 
-### Fine-Tuning and Moderation
+### Moderation, embeddings, models, fine-tuning
 
 ```ts
+const moderation = await openai.moderation({
+  model: 'omni-moderation-latest',
+  input: 'Check this text'
+})
+
+const embedding = await openai.getEmbedding({
+  model: 'text-embedding-3-small',
+  input: 'Vector me'
+})
+
+const models = await openai.getModels()
+
 const job = await openai.createFineTuningJob({
   model: 'gpt-4o-mini',
   training_file: file.id
 })
+```
 
-const moderation = await openai.moderation({
-  model: 'omni-moderation-latest',
-  input: 'Quick MCP status recap'
+### Alternative endpoints
+
+Point the client to any OpenAI-compatible base URL.
+
+```ts
+const alt = new OpenAIClient({
+  apiKey: process.env.ALT_KEY!,
+  baseURL: 'https://my-compat-endpoint/v1'
 })
 
-if (moderation.results[0].flagged) {
-  console.log('Content needs review')
-}
+const r = await alt.completion('hello', 1, undefined, { model: 'llama-3-instruct' })
 ```
 
 ---
 
-## Typing Tool Parameters
+## Type-safe tool schemas
 
-Use `defineObjectSchema` and `defineFunctionTool` to author JSON Schema payloads that double as TypeScript types.
+Author a JSON Schema once and reuse it for LLM tool calling and MCP.
 
 ```ts
 import {
@@ -199,208 +190,98 @@ import {
   type InferToolArguments
 } from '@ideadesignmedia/open-ai.js'
 
-const scheduleParameters = defineObjectSchema({
+const scheduleParams = defineObjectSchema({
   type: 'object',
   properties: {
     date: { type: 'string', format: 'date' },
-    slot: { type: 'integer', minimum: 0, maximum: 23 },
+    hour: { type: 'integer', minimum: 0, maximum: 23 },
     reason: { type: 'string' }
   },
-  required: ['date', 'slot'],
+  required: ['date', 'hour'],
   additionalProperties: false
 } as const)
 
-const scheduleTool = defineFunctionTool({
+export const scheduleTool = defineFunctionTool({
   type: 'function',
   function: {
     name: 'schedule_incident_review',
-    description: 'Book time to discuss an MCP incident',
-    parameters: scheduleParameters
+    description: 'Book a review slot',
+    parameters: scheduleParams
   }
 } as const)
 
-type ScheduleArguments = InferParams<typeof scheduleParameters>
+type ScheduleArgs = InferParams<typeof scheduleParams>
 type ScheduleCall = InferToolArguments<typeof scheduleTool>
-
-const handler = async (args: ScheduleArguments) => ({
-  confirmation: `set for ${args.date} ${args.slot}:00`
-})
 ```
-
-The same `scheduleTool` can be passed to chat completions, the Responses API, or registered as an MCP tool handler. Type inference keeps the handler signature aligned with your schema.
 
 ---
 
-## Working with Alternative Endpoints
+## UnifiedLLMClient
 
-Point `OpenAIClient` at any OpenAI‑compatible deployment by supplying `baseURL` and `apiKey` options.
-
-```ts
-const alt = new OpenAIClient({
-  apiKey: process.env.API_KEY,
-  baseURL: process.env.MODEL_ENDPOINT,
-  organization: undefined
-})
-
-const resp = await alt.completion('Hello alt endpoint', 1, undefined, {
-  model: 'llama-3-instruct'
-})
-```
-
-Note: When using non‑OpenAI deployments, set `baseURL` to that host and pass the token with `apiKey`. No additional configuration files are required.
-
----
-
-## Unified LLM Client
-
-`UnifiedLLMClient` gives you one interface across OpenAI, Anthropic, Google Gemini, Cohere, and Mistral. Messages, tool definitions, and metadata share a single TypeScript shape so routing logic stays provider‑agnostic.
+One interface across providers. Keep your message shape and tools and just swap providers.
 
 ```ts
-import {
-  UnifiedLLMClient,
-  type UnifiedChatRequest,
-  type UnifiedModelInfo
-} from '@ideadesignmedia/open-ai.js'
+import { UnifiedLLMClient } from '@ideadesignmedia/open-ai.js'
 
-const baseRequest: UnifiedChatRequest = {
+const client = new UnifiedLLMClient({
+  provider: 'openai',
+  apiKey: process.env.OPEN_AI_API_KEY!
+})
+
+const answer = await client.generateChat({
   model: 'gpt-4o-mini',
   messages: [
-    { role: 'system', content: 'Reply tersely.' },
-    { role: 'user', content: 'Give me an MCP elevator pitch.' }
-  ]
-}
-
-const openaiClient = new UnifiedLLMClient({
-  provider: 'openai',
-  apiKey: process.env.OPEN_AI_API_KEY!,
-  openai: { organization: process.env.OPEN_AI_ORGANIZATION }
-})
-
-const answer = await openaiClient.generateChat(baseRequest)
-console.log(answer.content)
-```
-
-### Provider Setups
-
-```ts
-// Anthropic
-const anthropic = new UnifiedLLMClient({
-  provider: 'anthropic',
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-  anthropic: { version: '2023-06-01' }
-})
-await anthropic.generateChat({
-  model: 'claude-3-haiku-20240307',
-  messages: [{ role: 'user', content: 'List MCP transports.' }]
-})
-
-// Google Gemini
-const gemini = new UnifiedLLMClient({
-  provider: 'google',
-  apiKey: process.env.GOOGLE_GEMINI_API_KEY!
-})
-await gemini.generateChat({
-  model: 'models/gemini-pro',
-  messages: [{ role: 'user', content: 'Name a compliant MCP client.' }]
-})
-
-// Cohere
-const cohere = new UnifiedLLMClient({
-  provider: 'cohere',
-  apiKey: process.env.COHERE_API_KEY!
-})
-await cohere.generateChat({
-  model: 'command-r',
-  messages: [{ role: 'user', content: 'Return a JSON summary of MCP.' }]
-})
-
-// Mistral
-const mistral = new UnifiedLLMClient({
-  provider: 'mistral',
-  apiKey: process.env.MISTRAL_API_KEY!
-})
-await mistral.generateChat({
-  model: 'mistral-small-latest',
-  messages: [{ role: 'user', content: 'Give one benefit of MCP.' }]
-})
-```
-
-### Shared Tools and Model Discovery
-
-All providers accept the same `tools` array if the upstream API supports function calling.
-
-```ts
-const tools = [
-  {
-    name: 'lookup_incident',
-    description: 'Fetch incident details',
-    parameters: {
-      type: 'object',
-      properties: { id: { type: 'string' } },
-      required: ['id']
+    { role: 'system', content: 'Be terse.' },
+    { role: 'user', content: 'Explain MCP in one line.' }
+  ],
+  tools: [
+    {
+      name: 'lookup_doc',
+      description: 'Look up a document',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id']
+      }
     }
-  }
-]
-
-const routed = new UnifiedLLMClient({ provider: 'openai', apiKey: process.env.OPEN_AI_API_KEY! })
-const result = await routed.generateChat({
-  ...baseRequest,
-  tools,
+  ],
   toolChoice: 'auto'
 })
 
-if (routed.supportsStreaming()) {
-  const stream = routed.streamChat({ ...baseRequest, model: 'gpt-4o-mini' })
-  for await (const chunk of stream) {
+console.log(answer.content)
+
+if (client.supportsStreaming()) {
+  for await (const chunk of client.streamChat({
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: 'Stream one sentence' }]
+  })) {
     if (chunk.type === 'content') process.stdout.write(chunk.delta)
   }
 }
-
-const models: UnifiedModelInfo[] = await routed.listModels()
-models.forEach(model => console.log(`${model.provider}: ${model.name}`))
 ```
 
-### Custom Fetch / Transport Overrides
-
-Every provider accepts an optional `fetch` implementation, headers, or base URL.
-
-```ts
-const proxyFetch: typeof fetch = async (input, init) => {
-  const next = new Request(String(input), {
-    ...init,
-    headers: { ...(init?.headers ?? {}), 'X-Debug-Request': 'true' }
-  })
-  return fetch(next)
-}
-
-const custom = new UnifiedLLMClient({
-  provider: 'anthropic',
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-  anthropic: { fetch: proxyFetch, baseURL: 'https://api.anthropic.com/v1' }
-})
-```
+To use other providers, instantiate with `provider: 'anthropic' | 'google' | 'cohere' | 'mistral'` and the matching API key. You can also override transport with a custom `fetch` function if needed.
 
 ---
 
-## MCP Server and Client Toolkit
+## MCP toolkit
 
-The MCP helpers implement the latest protocol spec (2025‑06‑18). Ship servers that expose tools/resources/prompts/models and clients that connect over WebSocket, HTTP long‑polling, or STDIO.
+Build MCP servers that expose tools, resources, prompts, and models. Connect with MCP clients over WebSocket, HTTP, or stdio.
 
-### Authoring Custom Tools
+### Define tools and start a server
 
 ```ts
 import {
-  defineFunctionTool,
-  defineObjectSchema,
   McpServer,
-  type McpServerOptions
+  defineFunctionTool,
+  defineObjectSchema
 } from '@ideadesignmedia/open-ai.js'
 
-const incidentTool = defineFunctionTool({
+const getIncident = defineFunctionTool({
   type: 'function',
   function: {
     name: 'get_incident_status',
-    description: 'Look up an incident by ticket id',
+    description: 'Fetch incident by ticket id',
     parameters: defineObjectSchema({
       type: 'object',
       properties: { ticket: { type: 'string' } },
@@ -413,241 +294,83 @@ const server = new McpServer({
   instructions: 'Incident MCP server',
   tools: [
     {
-      tool: incidentTool,
+      tool: getIncident,
       handler: async ({ ticket }) => ({ ticket, status: 'RESOLVED' })
     }
   ],
   resources: [{ id: 'runbook', name: 'Incident runbook' }],
   readResource: async () => 'Always update status channels.',
-  prompts: [{ name: 'postmortem', description: 'Generate postmortem template' }],
+  prompts: [{ name: 'postmortem', description: 'Postmortem template' }],
   getPrompt: async () => ({ text: '# Postmortem\n- Summary\n- Timeline' }),
   models: [{ name: 'playground', description: 'Demo model' }],
-  selectModel: (name) => console.log('model selected:', name)
-} satisfies McpServerOptions)
+  selectModel: (name) => console.log('selected model:', name),
+
+  // If your server implementation supports configuring transports in the constructor,
+  // include them here. Otherwise, configure them according to your host's expectations.
+  // Example fields that some hosts use: transports, port, path
+  // transports: ['websocket'], port: 3030, path: '/mcp'
+})
+
+// Start the server
+await server.start()
 ```
 
-### Transports: WebSocket, HTTP, STDIO
+### Connect with an MCP client
 
 ```ts
-// WebSocket listener
-await server.start({ websocket: { host: '127.0.0.1', port: 3030, path: '/mcp' } })
-
-// HTTP listener
-await server.start({ http: { host: '127.0.0.1', port: 3333, path: '/mcp' } })
-
-// STDIO bridge
-const clientToServer = new PassThrough()
-const serverToClient = new PassThrough()
-await server.start({ stdio: { input: clientToServer, output: serverToClient } })
+import { McpClient } from '@ideadesignmedia/open-ai.js'
 
 const client = new McpClient({
   transport: 'websocket',
   url: 'ws://127.0.0.1:3030/mcp'
 })
+
 await client.connect()
-await client.initialize({ clientInfo: { name: 'dashboard', version: '1.2.0' } })
+await client.initialize({ clientInfo: { name: 'dashboard', version: '1.0.0' } })
 await client.sendInitialized()
 
 const tools = await client.listTools()
-const incident = await client.callTool('get_incident_status', { ticket: 'INC-42' })
+const status = await client.callTool('get_incident_status', { ticket: 'INC-42' })
+console.log(status)
 ```
 
-### Bridging LLM Tool Calls to MCP
+### Bridging LLM tool calls to MCP
 
-1. Register your tool schema once (`incidentTool`).
-2. Hand it to the LLM via `chatCompletion({ tools: [incidentTool] })`.
-3. When the LLM emits a tool call, forward it to the MCP server using `client.callTool(...)`.
-4. Send the MCP response back to the LLM as a tool message.
-
-This pattern keeps LLM glue thin, with full MCP logging and transport flexibility.
+You can pass the same tool schema to an LLM for tool-calling and also register it with your MCP server. When the LLM returns a tool call, forward it to the MCP server and send the result back as a tool message.
 
 ---
 
-## MCP Server and Client Toolkit
+## Exports and capabilities
 
-This package includes a spec-compliant MCP server and client with multiple transports (stdio, WebSocket, HTTP). Below are concise, correct usage patterns for both, including how to start a server using this package.
+**Default export: `OpenAIClient`**
 
-### Authoring Custom Tools
+- Chat: `chatCompletion`, `chatCompletionStream`, helper `Message`
+- Responses API: `createResponse`, `createResponseStream`, `getResponse`, `cancelResponse`
+- Images: `generateImage`, `editImage`, `getImageVariations`
+- Audio: `generateSpeech`, `getTranscription`, `getTranslation`
+- Files: `uploadFile`, `getFiles`, `getFile`, `getFileContent`, `deleteFile`
+- Vector stores: `createVectorStore`, `addFileToVectorStore`, `searchVectorStore`, `getVectorStore`, `deleteVectorStore`
+- Embeddings: `getEmbedding`
+- Moderation: `moderation`
+- Models: `getModels`, `getModel`
+- Fine-tuning: `createFineTuningJob`, `listFineTuningJobs`, `retrieveFineTuningJob`, `cancelFineTuningJob`, `listFineTuningJobEvents`, `listFineTuningJobCheckpoints`
 
-Use the same tool schema helpers used for OpenAI tool calling. Register tool handlers on the server.
+**Named exports**
 
-```ts
-import { defineFunctionTool, defineObjectSchema, McpServer, type McpToolHandlerOptions } from '@ideadesignmedia/open-ai.js'
+- `UnifiedLLMClient` with `generateChat`, `streamChat`, `listModels`
+- `McpServer`, `McpClient`
+- Tool helpers: `defineFunctionTool`, `defineObjectSchema`, plus types like `InferParams`, `InferToolArguments`
 
-const sumTool = defineFunctionTool({
-  type: 'function',
-  function: {
-    name: 'sum_numbers',
-    description: 'Sum an array of numbers',
-    parameters: defineObjectSchema({
-      type: 'object',
-      properties: { values: { type: 'array', items: { type: 'number' }, minItems: 1 } },
-      required: ['values'],
-      additionalProperties: false
-    } as const)
-  }
-} as const)
+---
 
-const tools: ReadonlyArray<McpToolHandlerOptions> = [
-  { tool: sumTool, async handler({ values }) { return (values as number[]).reduce((t, n) => t + n, 0) } }
-]
+## Troubleshooting
 
-const server = new McpServer({ transports: ['stdio', 'websocket', 'http'], port: 3030, path: '/mcp', tools })
-await server.start()
-```
+- Authentication or quota errors: verify API key and model access
+- Streaming behind strict proxies: provide a custom `fetch` or allow SSE and WebSocket
+- Image helper build issues on some OS images: ensure toolchains for `sharp` if needed
 
-### Start the Server
+---
 
-- Programmatic (recommended):
+## License
 
-```ts
-import { startMockMcpServer } from '@ideadesignmedia/open-ai.js'
-
-// Starts an MCP server immediately. When `stdio` is included, it binds to process stdin/stdout.
-await startMockMcpServer({ transports: ['stdio', 'websocket', 'http'], port: 3030, path: '/mcp' })
-```
-
-- As a dedicated stdio server script (for editors/hosts that launch an MCP process):
-
-```ts
-// mcp-stdio.ts
-import { startMockMcpServer } from '@ideadesignmedia/open-ai.js'
-await startMockMcpServer({ transports: ['stdio'] })
-```
-
-```bash
-node mcp-stdio.ts
-```
-
-- From the built package (local dev):
-
-```bash
-npm run build
-node dist/scripts/mock-mcp-server.js --transports stdio,websocket,http --port 3030 --path /mcp
-```
-
-The built script binds stdio automatically if `stdio` is among transports and serves WS/HTTP at `ws://localhost:3030/mcp` and `http://localhost:3030/mcp`.
-
-### Transports: WebSocket, HTTP, STDIO
-
-Server supports any combination of:
-
-- `stdio` — JSON-RPC over newline-delimited stdio (ideal for local plugins)
-- `websocket` — JSON-RPC over WS at `ws://host:port/path`
-- `http` — JSON-RPC over HTTP POST at `http://host:port/path` (server also supports SSE replies when appropriate)
-
-### Client Quick Start
-
-The client mirrors the transports and speaks JSON-RPC per the MCP spec. Typical flow: `connect() → initialize() → sendInitialized() → list/call`.
-
-- WebSocket
-
-```ts
-import { McpClient } from '@ideadesignmedia/open-ai.js'
-
-const client = new McpClient({ transport: 'websocket', url: 'ws://localhost:3030/mcp' })
-await client.connect()
-
-const init = await client.initialize({ clientInfo: { name: 'example', version: '1.0.0' } })
-await client.sendInitialized()
-
-const tools = await client.listTools()
-const result = await client.callTool('sum_numbers', { values: [1, 2, 3] })
-```
-
-- HTTP
-
-```ts
-const httpClient = new McpClient({ transport: 'http', url: 'http://localhost:3030/mcp' })
-const init = await httpClient.initialize({ clientInfo: { name: 'example', version: '1.0.0' } })
-const tools = await httpClient.listTools()
-```
-
-- STDIO (spawn a process that implements stdio MCP, including servers started with `startMockMcpServer({ transports: ['stdio'] })`)
-
-```ts
-const stdioClient = new McpClient({
-  transport: 'stdio',
-  stdio: { command: 'node', args: ['dist/scripts/mock-mcp-server.js', '--transports', 'stdio'] }
-})
-await stdioClient.connect()
-await stdioClient.initialize({ clientInfo: { name: 'example', version: '1.0.0' } })
-```
-
-Common client helpers:
-
-```ts
-await client.listTools()
-await client.callTool('name', { /* args */ })
-await client.listResources(); await client.readResource('id-or-uri')
-await client.listPrompts(); await client.getPrompt('name', { /* args */ })
-await client.listModels(); await client.getModel('name'); await client.selectModel('name')
-await client.getMetadata(); // or getMetadataEntry('key')
-```
-
-### Bridging LLM Tool Calls to MCP
-
-The same `defineFunctionTool` schemas you pass to OpenAI tool-calling can be exposed via the MCP server. This lets model tool-calls seamlessly invoke your MCP tools in hosts that speak the protocol.
-
-```ts
-import OpenAIClient, { defineFunctionTool, defineObjectSchema, McpServer } from '@ideadesignmedia/open-ai.js'
-
-const weatherTool = defineFunctionTool({
-  type: 'function',
-  function: {
-    name: 'get_weather',
-    description: 'Return the temperature for a city',
-    parameters: defineObjectSchema({
-      type: 'object',
-      properties: { city: { type: 'string' } },
-      required: ['city'],
-      additionalProperties: false
-    } as const)
-  }
-} as const)
-
-const server = new McpServer({ transports: ['websocket'], tools: [
-  { tool: weatherTool, async handler({ city }) { return { temperature: 72, city } } }
-] })
-await server.start()
-
-// The very same tool can be provided to OpenAI tool-calling:
-const openai = new OpenAIClient({ apiKey: process.env.OPEN_AI_API_KEY! })
-const response = await openai.chatCompletion(
-  [/* messages */],
-  1,
-  undefined,
-  { model: 'gpt-4o-mini', tools: [weatherTool], tool_choice: 'auto' }
-)
-```
-
-## Exports & Capabilities
-
-- Default export `OpenAIClient` – typed helpers for OpenAI-compatible endpoints:
-  - Chat: `chatCompletion`, `chatCompletionStream`, `Message`
-  - Responses API: `createResponse`, `createResponseStream`, `getResponse`, `cancelResponse`
-  - Audio: `generateSpeech`, `getTranscription`, `getTranslation`
-  - Images: `generateImage`, `editImage`, `getImageVariations`
-  - Files: `uploadFile`, `getFiles`, `getFile`, `getFileContent`, `deleteFile`
-  - Fine-tuning: `createFineTuningJob`, `listFineTuningJobs`, `retrieveFineTuningJob`, `cancelFineTuningJob`, `listFineTuningJobEvents`, `listFineTuningJobCheckpoints`
-  - Embeddings: `getEmbedding`
-  - Moderation: `moderation`
-  - Models: `getModels`, `getModel`
-  - Vector Stores: `createVectorStore`, `addFileToVectorStore`, `searchVectorStore`, `getVectorStore`, `deleteVectorStore`
-
-- Named MCP exports:
-  - `McpServer`, `McpClient`, `JsonRpcError`
-  - Tool helpers: `defineFunctionTool`, `defineObjectSchema`
-  - Convenience: `createMockMcpServer`, `startMockMcpServer` (for local demos)
-
-- Unified client:
-  - `UnifiedLLMClient` – one interface for OpenAI, Anthropic, Gemini, Cohere, and Mistral, including shared tools, streaming (where supported), and model listing.
-
-## Troubleshooting & Tips
-
-- **401/403 or quota errors:** Ensure the correct API key is in your environment. Many providers require enabling specific models/features on your account.
-- **Streaming stalls:** Ensure your environment allows outbound SSE/WebSocket connections; behind strict proxies provide a custom `fetch`.
-- **Native builds failing (`sharp`):** Install the prerequisite build toolchain or use prebuilt Docker images.
-- **Provider streaming:** Only the OpenAI provider currently implements `streamChat`; others throw a descriptive error until their APIs expose compatible transports.
-
-Happy building!
+See the repository license file.
