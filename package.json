@@ -1,6 +1,6 @@
 {
     "name": "@ideadesignmedia/open-ai.js",
-    "version": "2.2.0",
+    "version": "2.2.1",
     "main": "dist/index.js",
     "author": "Sam Wagner <60307610+ideadesignmedia@users.noreply.github.com>",
     "license": "MIT",
@@ -36,5 +36,12 @@
             "require": "./dist/index.js",
             "default": "./dist/index.js"
         }
+    },
+    "overrides": {
+        "minimatch": "^9.0.5",
+        "rimraf": "^5.0.5",
+        "@npmcli/move-file": "^2.0.1",
+        "glob": "^10.3.10",
+        "graceful-fs": "^4.2.11"
     }
 }
